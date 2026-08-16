@@ -1,0 +1,32 @@
+{
+  "name": "hq-server",
+  "version": "2.0.0",
+  "description": "HealthQueue+ API Server",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "seed": "node src/seed/seed.js",
+    "migrate": "node src/migrate.js",
+    "env-check": "node -e \"require('dotenv').config();['MONGO_URI','JWT_SECRET','PORT'].forEach(k=>{if(!process.env[k])throw new Error('Missing: '+k)});console.log('✅ Env OK')\"",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "morgan": "^1.10.0",
+    "nodemailer": "^9.0.5",
+    "openai": "^4.47.1",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

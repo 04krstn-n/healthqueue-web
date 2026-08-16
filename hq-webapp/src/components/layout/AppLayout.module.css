@@ -1,0 +1,188 @@
+/* ── Shell ── */
+.shell {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* ── Sidebar — Facility Admin (Green Gradient) ── */
+.sidebar {
+  width: 256px; /* Matches w-64 */
+  background: linear-gradient(180deg, #175828 0%, #105E3F 50%, #0A424C 100%);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* ── Sidebar — Super Admin (Purple Gradient) ── */
+.superSidebar {
+  background: linear-gradient(180deg, #6E269D 0%, #132D91 50%, #071035 100%);
+}
+
+/* Brand (Matches p-6 and border-white/10) */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+.brandText  { display: flex; flex-direction: column; }
+.brandName  { font-size: 16px; font-weight: 700; color: #fff; }
+.brandRole  { font-size: 12px; color: rgba(255, 255, 255, 0.7); }
+
+/* ── LOGO ── */
+.logoBox {
+  width: 35px;
+  height: 35px;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(29, 78, 216, 0.10);
+  flex-shrink: 0;
+}
+
+.logoImg {
+  width: 27px;
+  height: 27px;
+  object-fit: contain;
+  display: block;
+}
+
+/* Nav (Matches flex-1 p-4 space-y-1) */
+.nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+/* Hide scrollbar (matches scrollbar-hide) */
+.nav::-webkit-scrollbar { display: none; }
+.nav { -ms-overflow-style: none; scrollbar-width: none; }
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px; /* Matches py-3 px-4 */
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.8);
+  text-decoration: none;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.navItem:hover { background: rgba(255, 255, 255, 0.1); }
+
+/* Active state for both roles (Matches bg-white/20 text-white font-medium) */
+.navActive {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: #fff !important;
+  font-weight: 500 !important;
+}
+
+.navIcon  { flex-shrink: 0; display: flex; align-items: center; color: rgba(255, 255, 255, 0.6); }
+.navActive .navIcon { color: #fff; }
+.navLabel { overflow: hidden; text-overflow: ellipsis; }
+
+/* Sidebar footer (Matches p-4 space-y-2 border-t border-white/10) */
+.sidebarFooter {
+  padding: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.userRow    { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+.userAvatar {
+  width: 32px; height: 32px;
+  background: #ffffff;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.userInfo   { flex: 1; min-width: 0; overflow: hidden; }
+.userName   { font-size: 14px; font-weight: 500; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.userEmail  { font-size: 12px; color: rgba(255, 255, 255, 0.7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Logout Button (Matches bg-white text-red-600 hover:bg-red-50) */
+.logoutBtn {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-radius: 8px;
+  font-size: 14px; font-weight: 500;
+  color: #dc2626; 
+  background: #ffffff;
+  border: none;
+  cursor: pointer; transition: all 0.15s; width: 100%;
+}
+.logoutBtn:hover { background: #fef2f2; }
+
+/* ── Main area ── */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Top bar */
+.topbar {
+  height: 56px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 24px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.pageHeading { flex: 1; font-size: 18px; font-weight: 700; color: var(--text); }
+.topRight { display: flex; align-items: center; gap: 10px; }
+
+.searchBar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  min-width: 200px;
+}
+.searchBar input { border: none; outline: none; background: transparent; font-size: 13px; color: var(--text); width: 100%; }
+.searchBar input::placeholder { color: var(--muted-lt); }
+.searchBar svg { color: var(--muted); flex-shrink: 0; }
+
+.bellBtn {
+  width: 36px; height: 36px;
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--muted); cursor: pointer; position: relative;
+}
+.bellBtn:hover { background: var(--border-lt); }
+.bellDot {
+  position: absolute; top: 7px; right: 7px;
+  width: 7px; height: 7px;
+  background: var(--error); border-radius: 50%;
+  border: 1.5px solid #fff;
+}
+
+/* Content */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}

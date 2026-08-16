@@ -1,0 +1,391 @@
+/* ================================================================
+   facility-admin.module.css
+   ONE file for ALL facility-admin pages:
+     FacilityDashboard · StaffPage · QueuePage · AppointmentsPage
+     PatientsPage · ServicesPage · SchedulePage · FacilityReportsPage
+   ================================================================ */
+
+/* ── Base ──────────────────────────────────────────────────────── */
+.page      { display: flex; flex-direction: column; gap: 16px; position: relative; }
+.toast     { position: fixed; top: 20px; right: 24px; z-index: 9999; background: #1F2937; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 500; box-shadow: 0 4px 20px rgba(0,0,0,.2); }
+.header    { display: flex; align-items: flex-start; justify-content: space-between; }
+.title     { font-size: 18px; font-weight: 700; color: var(--text); }
+.sub       { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.toolbar   { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pagination{ display: flex; align-items: center; gap: 12px; justify-content: center; padding: 14px; }
+
+/* ── FacilityDashboard ─────────────────────────────────────────── */
+.statsGrid     { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.statCard      { padding: 18px 20px; display: flex; flex-direction: column; }
+.statLabel     { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); }
+.statValue     { font-size: 26px; font-weight: 800; line-height: 1; margin-top: 4px; }
+.statSub       { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.chartsRow     { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.chartCard     { padding: 20px 20px 12px; }
+.chartTitle    { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+.activityCard  { padding: 20px 22px; }
+.activityList  { display: flex; flex-direction: column; gap: 0; }
+.activityRow   { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border-lt); }
+.activityRow:last-of-type { border-bottom: none; }
+.activityDot   { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); flex-shrink: 0; }
+.activityInfo  { flex: 1; }
+.activityName  { font-size: 13px; font-weight: 600; color: var(--text); }
+.activityAction{ font-size: 12px; color: var(--muted); }
+.activityTime  { font-size: 11px; color: var(--muted-lt); white-space: nowrap; }
+
+/* ── QueuePage ─────────────────────────────────────────────────── */
+.statsRow    { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.viewToggle  { display: flex; border: 1.5px solid var(--border); border-radius: 8px; overflow: hidden; }
+.viewBtn     { padding: 6px 12px; border: none; background: transparent; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 5px; transition: all .15s; }
+.viewBtn:hover   { background: var(--border-lt); }
+.viewBtnActive   { background: var(--primary); color: #fff; }
+.summaryGrid     { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+.summaryCard     { padding: 18px 20px; }
+.summaryName     { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.summaryStats    { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sStat           { text-align: center; padding: 8px; background: var(--bg); border-radius: 8px; }
+.sStatVal        { font-size: 18px; font-weight: 700; }
+.sStatLbl        { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.ticketBadge     { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; background: #EFF6FF; color: var(--primary); font-size: 13px; font-weight: 700; }
+.waitTime        { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.actionGroup     { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ── StaffPage ─────────────────────────────────────────────────── */
+.staffGrid    { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.staffCard    { padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+.staffAvatar  { width: 48px; height: 48px; border-radius: 50%; background: #EFF6FF; color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; flex-shrink: 0; }
+.staffName    { font-size: 14px; font-weight: 700; color: var(--text); }
+.staffRole    { font-size: 12px; color: var(--muted); }
+.staffMeta    { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+.staffActions { display: flex; gap: 6px; margin-top: auto; }
+
+/* ── AppointmentsPage ──────────────────────────────────────────── */
+.apptList { 
+  display: flex; 
+  flex-direction: column; 
+  gap: 12px; 
+}
+
+.apptCard { 
+  padding: 16px 20px; 
+  display: flex; 
+  align-items: center; 
+  gap: 20px; 
+  background: var(--bg, #f8fafc);
+  border: 1px solid var(--border-lt, #e2e8f0);
+  border-radius: 12px;
+  transition: border-color 0.2s;
+}
+
+.apptCard:hover {
+  border-color: var(--border, #cbd5e1);
+}
+
+/* Left side identifier (Queue Number or Time Slot) */
+.queueNumber {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--primary);
+  min-width: 50px;
+  text-align: center;
+  background: #EFF6FF;
+  padding: 8px 0;
+  border-radius: 8px;
+}
+
+.apptTime { 
+  font-size: 14px; 
+  font-weight: 700; 
+  color: var(--primary); 
+  white-space: nowrap; 
+  min-width: 80px; 
+  text-align: center;
+  background: #EFF6FF;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+
+/* Middle Content (Patient Info) */
+.apptInfo { 
+  flex: 1; 
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.apptName { 
+  font-size: 15px; 
+  font-weight: 700; 
+  color: var(--text); 
+}
+
+.apptService { 
+  font-size: 12px; 
+  color: var(--muted); 
+  font-weight: 500;
+}
+
+/* Meta Data Grid (Wait times, Status Badges) */
+.apptMetaGrid {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 0 24px;
+  border-left: 1px solid var(--border-lt);
+  border-right: 1px solid var(--border-lt);
+}
+
+.metaBlock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 60px;
+}
+
+.metaLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.metaVal {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Right side actions */
+.apptActions { 
+  display: flex; 
+  gap: 8px; 
+  flex-shrink: 0; 
+  min-width: 140px; /* Prevents button jumping when states change */
+  justify-content: flex-end;
+}
+
+/* --- Controls & Segmented Tabs --- */
+.controlsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.segmentedTabs {
+  display: flex;
+  background: var(--bg, #f1f5f9);
+  border-radius: 10px;
+  padding: 4px;
+  gap: 2px;
+}
+
+.segTab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  background: transparent;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.segTab:hover {
+  color: var(--text, #0f172a);
+}
+
+.segTabActive {
+  background: #ffffff;
+  color: var(--primary, #2563EB);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .controlsRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbarRight {
+    width: 100%;
+  }
+  .toolbarRight .search-bar {
+    flex: 1;
+    width: auto !important;
+  }
+}
+
+/* --- Responsive Adjustments --- */
+@media (max-width: 900px) {
+  .apptCard {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  
+  .apptMetaGrid {
+    border: none;
+    padding: 12px 0 0 0;
+    border-top: 1px solid var(--border-lt);
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .apptActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ── PatientsPage ──────────────────────────────────────────────── */
+.patientRow    { display: flex; align-items: center; gap: 12px; }
+.patientAvatar { width: 36px; height: 36px; border-radius: 50%; background: #EFF6FF; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: var(--primary); flex-shrink: 0; }
+.patientName   { font-size: 13px; font-weight: 600; color: var(--text); }
+.patientEmail  { font-size: 11px; color: var(--muted); }
+
+/* ── ServicesPage ──────────────────────────────────────────────── */
+.layoutGrid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; align-items: start;}
+.columnWrap {  display: flex; flex-direction: column; gap: 24px;}
+.sectionBox {  padding: 24px; display: flex; flex-direction: column;}
+.sectionHeader { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border-lt, #e2e8f0);}
+.infoList { display: flex; flex-direction: column; gap: 16px;
+}
+
+.infoRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.infoLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.infoContent {
+  width: 100%;
+}
+
+.infoValue {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+  padding: 6px 0; /* Align height with input visually */
+}
+
+/* --- Settings Rows --- */
+.settingRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-lt, #e2e8f0);
+}
+
+.settingRow:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.settingTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settingSub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* --- Services List --- */
+.servicesWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.serviceLineItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  transition: border-color 0.2s;
+}
+
+.serviceLineItem:hover {
+  border-color: var(--primary);
+}
+
+.serviceLineIcon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #DCFCE7; /* Light green */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.serviceLineText {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* --- Responsive --- */
+@media (max-width: 900px) {
+  .layoutGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── SchedulePage ──────────────────────────────────────────────── */
+.grid       { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; align-items: start; }
+.dayCard    { padding: 14px; }
+.dayTitle   { font-size: 12px; font-weight: 700; color: var(--primary); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--border-lt); }
+.empty      { font-size: 11px; color: var(--muted-lt); text-align: center; padding: 16px 0; }
+.slotItem   { padding: 8px 0; border-bottom: 1px solid var(--border-lt); }
+.slotItem:last-of-type { border-bottom: none; }
+.slotTime    { font-size: 12px; font-weight: 700; color: var(--text); }
+.slotService { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.slotMeta    { font-size: 10px; color: var(--muted-lt); margin-top: 1px; }
+.slotActions { display: flex; gap: 4px; margin-top: 6px; }
+
+/* ── FacilityReportsPage ───────────────────────────────────────── */
+.reportsGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.reportCard  { padding: 20px 22px; }
+
+/* ── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 1200px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 1100px) {
+  .statsGrid   { grid-template-columns: repeat(2, 1fr); }
+  .statsRow    { grid-template-columns: repeat(2, 1fr); }
+  .chartsRow   { grid-template-columns: 1fr; }
+  .reportsGrid { grid-template-columns: 1fr; }
+}
+@media (max-width: 768px)  { .grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px)  { .statsGrid { grid-template-columns: 1fr 1fr; } }
