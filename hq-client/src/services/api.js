@@ -11,7 +11,7 @@ import axios from 'axios'
  * List/detail helpers below normalize the `data` envelope so pages can
  * consume the actual records directly.
  */
-const BASE = (import.meta.env.VITE_API_URL || 'http://localhost:4000')
+const BASE = (import.meta.env.VITE_API_URL)
   .replace(/\/api\/?$/, '')
   .replace(/\/$/, '')
 
