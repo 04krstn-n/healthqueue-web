@@ -40,8 +40,8 @@ const QueueEntrySchema = new mongoose.Schema(
     // Status
     status: {
       type: String,
-      enum: ['waiting', 'serving', 'done', 'completed', 'no_show', 'skipped', 'cancelled'],
-      default: 'waiting',
+      enum: ['Waiting', 'Serving', 'Done', 'Completed', 'No_show', 'Skipped', 'Cancelled'],
+      default: 'Waiting',
       index: true,
     },
 
@@ -93,7 +93,7 @@ QueueEntrySchema.pre('save', function (next) {
   }
 
   // 2. Calculate total Turnaround Time (TAT) when status is 'completed' or 'done'
-  const isFinished = this.status === 'completed' || this.status === 'done';
+  const isFinished = this.status === 'Completed' || this.status === 'Done';
   const finishTime = this.completedAt || new Date();
 
   if (isFinished && this.joinedAt) {
