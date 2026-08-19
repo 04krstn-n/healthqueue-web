@@ -77,6 +77,9 @@ const createStaff = async (req, res) => {
   try {
     const { fullName, email, phone, gender, role, specialization, licenseNumber, clinicId, password } = req.body;
 
+    console.log('CREATE STAFF BODY:', req.body);
+    console.log('RECEIVED GENDER:', gender);
+
     if (!fullName || !email) {
       if (session) await session.abortTransaction();
       return res.status(400).json({ message: 'Name and email are required.' });
