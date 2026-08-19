@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Staff = require('../models/Staff');
+const { logAction } = require('../utils/auditLog');
 
 // GET /api/users
 const getUsers = async (req, res) => {
@@ -116,6 +117,16 @@ const createUser = async (req, res) => {
 
     if (session) await session.commitTransaction();
 
+    await logAction({
+      actor: req.user,
+      action: 'create',
+      targetType: 'User',
+      targetId: user._id,
+      targetLabel: user.fullName,
+      clinicId: targetClinic,
+      details: { role: user.role, email: user.email },
+    });
+
     return res.status(201).json({
       success: true,
       data: user.toSafeObject(),
@@ -160,6 +171,16 @@ const updateUser = async (req, res) => {
       }
     }
 
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'User',
+      targetId: user._id,
+      targetLabel: user.fullName,
+      clinicId: user.clinicId,
+      details: req.body,
+    });
+
     return res.json(user.toSafeObject());
   } catch (err) {
     return res.status(500).json({ message: 'Failed to update user.' });
@@ -182,6 +203,15 @@ const deactivateUser = async (req, res) => {
     if (user.role === 'staff') {
       await Staff.findOneAndUpdate({ user: user._id }, { isActive: false });
     }
+
+    await logAction({
+      actor: req.user,
+      action: 'deactivate',
+      targetType: 'User',
+      targetId: user._id,
+      targetLabel: user.fullName,
+      clinicId: user.clinicId,
+    });
 
     return res.json({ message: 'User deactivated.', user: user.toSafeObject() });
   } catch (err) {

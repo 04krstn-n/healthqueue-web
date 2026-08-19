@@ -29,6 +29,7 @@ const servicesRoutes     = require('./routes/servicesRoutes');
 const chatbotAdminRoutes = require('./routes/chatbotAdminRoutes');
 const systemConfigRoutes = require('./routes/systemConfigRoutes');
 const analyticsRoutes    = require('./routes/analyticsRoutes');
+const auditLogRoutes     = require('./routes/auditLogRoutes');
 
 // ─── Connect Database ─────────────────────────────────────────────────────────
 connectDB();
@@ -70,7 +71,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-   origin: 'http://localhost:3000' || FRONTEND_ORIGINS, // Allow requests from localhost for development
+  origin: 'http://localhost:3000'
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -114,6 +115,7 @@ app.use('/api/services',      servicesRoutes);
 app.use('/api/chatbot-admin', chatbotAdminRoutes);
 app.use('/api/system-config',        systemConfigRoutes);
 app.use('/api/analytics',     analyticsRoutes);
+app.use('/api/audit-logs',    auditLogRoutes);
 
 // ─── Error Handlers ───────────────────────────────────────────────────────────
 app.use(notFound);
