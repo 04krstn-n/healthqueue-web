@@ -70,7 +70,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
-   origin: 'http://localhost:3000'
+   origin: 'http://localhost:3000' || FRONTEND_ORIGINS, // Allow requests from localhost for development
 }));
 
 app.use(express.json({ limit: '10mb' }));
