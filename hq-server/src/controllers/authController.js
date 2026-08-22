@@ -6,6 +6,7 @@ const Patient = require('../models/Patient');
 const { signToken } = require('../utils/token');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
+const { sendOTP } = require('../services/smsService');
 
 /**
  * Generates a 6-digit OTP code
@@ -57,18 +58,21 @@ const register = async (req, res) => {
       patientType: 'Regular',
     });
 
-    // Console log the OTP for local development testing
-    console.log(`\n==================================================`);
-    console.log(`📱 [DEV OTP MOCK] Verification Code for ${user.phone}: [ ${otpCode} ]`);
-    console.log(`==================================================\n`);
+    // Actually send the code via Semaphore SMS. sendSMS() itself falls back to a
+    // console-only mock if SEMAPHORE_API_KEY isn't configured, so this is safe
+    // to call in every environment.
+    const smsResult = await sendOTP(user.phone, otpCode);
 
     return res.status(HttpStatus.CREATED).json({
       success: true,
-      message: 'Registration successful! An OTP code has been generated.',
+      message: smsResult.mock
+        ? 'Registration successful! SMS is not configured, so check the server logs for your OTP.'
+        : 'Registration successful! An OTP code has been sent to your phone.',
       userId: user._id,
       phone: user.phone,
-      // Included for mobile app testing without Semaphore SMS credits
-      devOtp: otpCode, 
+      // Only present when SEMAPHORE_API_KEY is unset (mock mode) — lets you test
+      // the flow without burning SMS credits. Never sent once real SMS is live.
+      ...(smsResult.mock ? { devOtp: otpCode } : {}),
     });
   } catch (err) {
     console.error('Register Error:', err.message);
@@ -162,14 +166,14 @@ const resendOTP = async (req, res) => {
     user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
     await user.save();
 
-    console.log(`\n==================================================`);
-    console.log(`📱 [DEV RESEND OTP] New Code for ${user.phone}: [ ${otpCode} ]`);
-    console.log(`==================================================\n`);
+    const smsResult = await sendOTP(user.phone, otpCode);
 
     return res.status(HttpStatus.OK).json({
       success: true,
-      message: 'A fresh OTP code has been generated. Check server logs.',
-      devOtp: otpCode,
+      message: smsResult.mock
+        ? 'A fresh OTP code has been generated. SMS is not configured, so check the server logs.'
+        : 'A fresh OTP code has been sent to your phone.',
+      ...(smsResult.mock ? { devOtp: otpCode } : {}),
     });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
