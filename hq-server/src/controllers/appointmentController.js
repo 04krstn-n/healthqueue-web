@@ -6,6 +6,7 @@ const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
 const TimeSlot = require('../models/TimeSlot');
 const { HttpStatus } = require('../config/config');
+const { logAction } = require('../utils/auditLog');
 
 // POST /api/appointments — Patient books an appointment
 const bookAppointment = async (req, res) => {
@@ -378,6 +379,22 @@ const getAppointment = async (req, res) => {
 const updateStatus = async (req, res) => {
   try {
     const appt = await Appointment.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
+
+    if (appt) {
+      // Map to the specific audit action when we have one, otherwise fall
+      // back to a generic 'update' so any status value is still recorded.
+      const actionForStatus = { completed: 'complete', no_show: 'no_show' };
+      await logAction({
+        actor: req.user,
+        action: actionForStatus[appt.status] || 'update',
+        targetType: 'Appointment',
+        targetId: appt._id,
+        targetLabel: `${appt.patientName} — ${appt.serviceName}`,
+        clinicId: appt.clinic,
+        details: { status: appt.status },
+      });
+    }
+
     return res.status(HttpStatus.OK).json({ success: true, data: appt });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: err.message });

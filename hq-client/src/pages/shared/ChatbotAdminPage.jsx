@@ -21,13 +21,19 @@ const EMPTY_FORM = {
 }
 
 export default function ChatbotAdminPage() {
-  const [tab, setTab] = useState('Responses') // 'Responses' | 'Settings' | 'Analytics'
+  const [tab, setTab] = useState('Responses') // 'Responses' | 'Escalated' | 'Settings' | 'Analytics'
   const [faqs, setFaqs] = useState([])
   const [logs, setLogs] = useState([])
   const [analytics, setAnalytics] = useState(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [catFilter, setCatFilter] = useState('All')
+
+  // ── Escalated conversations (staff currently handling / handled) ──────────
+  const [escalated, setEscalated] = useState([])
+  const [escalatedLoading, setEscalatedLoading] = useState(false)
+  const [escalatedFilter, setEscalatedFilter] = useState('unresolved') // 'unresolved' | 'resolved' | 'all'
+  const [resolvingId, setResolvingId] = useState(null)
 
   const [modal, setModal] = useState(null) // null | 'add' | 'edit'
   const [editing, setEditing] = useState(null)
@@ -81,6 +87,21 @@ export default function ChatbotAdminPage() {
     }
   }, [])
 
+  // GET /api/chatbot-admin/escalated — every escalation for this admin's
+  // clinic (or all clinics for super_admin), including ones staff already
+  // picked up and resolved. See chatbotAdminController.getEscalatedLogs.
+  const loadEscalated = useCallback(async () => {
+    setEscalatedLoading(true)
+    try {
+      const res = await chatbotAdminApi.getEscalated()
+      setEscalated(Array.isArray(res?.data) ? res.data : [])
+    } catch {
+      showToast('Failed to load escalated conversations')
+    } finally {
+      setEscalatedLoading(false)
+    }
+  }, [showToast])
+
   useEffect(() => {
     loadFAQs()
   }, [loadFAQs])
@@ -91,6 +112,19 @@ export default function ChatbotAdminPage() {
       loadAnalytics()
     }
   }, [tab, loadLogs, loadAnalytics])
+
+  // Load on entering the tab, then poll while it stays open so newly
+  // escalated conversations show up without a manual refresh. The server
+  // also emits a scoped 'chat_escalated' socket event the moment a patient
+  // escalates or staff resolves one — if this app already has a shared
+  // socket client wired up elsewhere, swap this interval for a listener on
+  // that event for instant updates instead of a ~10s poll.
+  useEffect(() => {
+    if (tab !== 'Escalated') return undefined
+    loadEscalated()
+    const interval = setInterval(loadEscalated, 10000)
+    return () => clearInterval(interval)
+  }, [tab, loadEscalated])
 
   // ─── Modal & Form Handlers ───────────────────────────────────────────────────
   const openAdd = () => {
@@ -190,6 +224,25 @@ export default function ChatbotAdminPage() {
     }
   }
 
+  // PUT /api/chatbot/resolve/:id — marks an escalated conversation as
+  // handled. Any admin/staff can resolve regardless of who it's assigned
+  // to, matching the server's authorizeRoles('staff','facility_admin',
+  // 'super_admin') on that route.
+  const handleResolveEscalation = async (log) => {
+    const note = window.prompt('Resolution note (optional):', '')
+    if (note === null) return // user cancelled the prompt
+    setResolvingId(log._id)
+    try {
+      await chatbotAdminApi.resolveEscalation(log._id, note)
+      showToast('Conversation marked as resolved')
+      await loadEscalated()
+    } catch {
+      showToast('Failed to resolve conversation')
+    } finally {
+      setResolvingId(null)
+    }
+  }
+
   // ─── Memoized Selectors ───────────────────────────────────────────────────────
   const activeFAQsCount = useMemo(() => {
     return faqs.filter((f) => f.isActive).length
@@ -214,6 +267,19 @@ export default function ChatbotAdminPage() {
     return logs.filter((l) => new Date(l.createdAt || 0).getTime() > thirtyDaysAgo).length
   }, [logs])
 
+  const filteredEscalated = useMemo(() => {
+    return escalated.filter((l) => {
+      if (escalatedFilter === 'unresolved') return !l.resolvedByStaff
+      if (escalatedFilter === 'resolved') return l.resolvedByStaff
+      return true
+    })
+  }, [escalated, escalatedFilter])
+
+  const unresolvedCount = useMemo(
+    () => escalated.filter((l) => !l.resolvedByStaff).length,
+    [escalated]
+  )
+
   return (
     <div className={styles.page}>
       {toast && <div className={styles.toast}>{toast}</div>}
@@ -233,8 +299,8 @@ export default function ChatbotAdminPage() {
         </div>
         <div className={styles.statusBadge}>
           <span className={styles.statusDot} />
-          Chatbot Status: <strong>Active</strong>
-          <span className="badge badge-green" style={{ marginLeft: 6 }}>
+          Chatbot Status:
+          <span className="badge badge-green">
             Active
           </span>
         </div>
@@ -242,13 +308,16 @@ export default function ChatbotAdminPage() {
 
       {/* ── Tab Switcher ── */}
       <div className={styles.tabs}>
-        {['Responses', 'Settings', 'Analytics'].map((t) => (
+        {['Responses', 'Escalated', 'Settings', 'Analytics'].map((t) => (
           <button
             key={t}
             className={`${styles.tab} ${tab === t ? styles.tabActive : ''}`}
             onClick={() => setTab(t)}
           >
             {t}
+            {t === 'Escalated' && unresolvedCount > 0 && (
+              <span className={styles.tabCount}>{unresolvedCount}</span>
+            )}
           </button>
         ))}
       </div>
@@ -367,16 +436,136 @@ export default function ChatbotAdminPage() {
         </>
       )}
 
+      {/* ── ESCALATED TAB ──
+          Every conversation a patient escalated (or the bot auto-escalated),
+          across this admin's clinic — including ones a staff member has
+          already picked up and resolved, so nothing falls off the radar. */}
+      {tab === 'Escalated' && (
+        <>
+          <div className={styles.toolbar}>
+            <div className={styles.escalatedFilterGroup}>
+              {[
+                ['unresolved', 'Needs Attention'],
+                ['resolved', 'Resolved'],
+                ['all', 'All'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  className={`${styles.filterChip} ${escalatedFilter === value ? styles.filterChipActive : ''}`}
+                  onClick={() => setEscalatedFilter(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ flex: 1 }} />
+            <button className="btn btn-outline btn-sm" onClick={loadEscalated} disabled={escalatedLoading}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="23 4 23 10 17 10" />
+                <polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+              Refresh
+            </button>
+          </div>
+
+          {escalatedLoading && escalated.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+              Loading escalated conversations…
+            </div>
+          ) : filteredEscalated.length === 0 ? (
+            <div className="card" style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
+              {escalatedFilter === 'unresolved'
+                ? 'No conversations currently need attention.'
+                : escalatedFilter === 'resolved'
+                ? 'No resolved conversations yet.'
+                : 'No escalated conversations yet.'}
+            </div>
+          ) : (
+            <div className={styles.faqList}>
+              {filteredEscalated.map((log) => (
+                <div key={log._id} className={`card ${styles.faqCard}`}>
+                  <div className={styles.faqTop}>
+                    <div className={styles.faqMeta}>
+                      <span className={styles.faqQuestion}>
+                        {log.patient?.fullName || 'Anonymous patient'}
+                      </span>
+                      <span className={`badge ${log.resolvedByStaff ? 'badge-gray' : 'badge-orange'}`}>
+                        {log.resolvedByStaff ? 'Resolved' : 'Needs Attention'}
+                      </span>
+                      {log.clinicId?.name && (
+                        <span className="badge badge-blue">{log.clinicId.name}</span>
+                      )}
+                      <span className="badge badge-gray">{log.source || 'faq'}</span>
+                    </div>
+                    <span className={styles.usageText}>
+                      {log.escalatedAt
+                        ? new Date(log.escalatedAt).toLocaleString('en-PH', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : ''}
+                    </span>
+                  </div>
+
+                  <div className={styles.faqAnswer}>
+                    <strong>Patient:</strong> {log.message}
+                    {log.reply && (
+                      <>
+                        <br />
+                        <strong>Bot reply:</strong> {log.reply}
+                      </>
+                    )}
+                    {log.escalationNote && (
+                      <>
+                        <br />
+                        <strong>Escalation note:</strong> {log.escalationNote}
+                      </>
+                    )}
+                  </div>
+
+                  <div className={styles.faqFooter}>
+                    <span className={styles.usageText}>
+                      {log.resolvedByStaff
+                        ? `Resolved by ${log.escalatedToStaff?.fullName || 'staff'}${
+                            log.resolvedNote ? ` — "${log.resolvedNote}"` : ''
+                          }`
+                        : 'Waiting for staff response'}
+                    </span>
+                    {!log.resolvedByStaff && (
+                      <div className={styles.faqActions}>
+                        <button
+                          className={styles.actionBtn}
+                          disabled={resolvingId === log._id}
+                          onClick={() => handleResolveEscalation(log)}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          {resolvingId === log._id ? 'Resolving…' : 'Mark Resolved'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       {/* ── SETTINGS TAB ── */}
       {tab === 'Settings' && (
-        <div className="card" style={{ padding: 28 }}>
+        <div className="card" style={{ padding: 28, maxWidth: 700, margin: '0 auto' }}>
           <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 20 }}>Chatbot Settings</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 480 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {[
               ['Chatbot Mode', 'FAQ Fallback (No Rasa server configured)'],
               ['Default Language', 'Filipino / English (Bilingual)'],
               ['Max Response Length', '500 characters'],
-              ['Fallback Message', '"Sorry, I didn\'t understand. Please visit our reception desk."'],
+              ['Fallback Message', '"Sorry, I didn\'t understand. Redirecting you to a healthcare staff member."'],
             ].map(([label, value]) => (
               <div
                 key={label}
@@ -520,7 +709,7 @@ export default function ChatbotAdminPage() {
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label className="form-label">Question / Intent *</label>
+                <label className="form-label">Question / Intent <span style={{ color: '#DC2626' }}>*</span></label>
                 <input
                   className="form-input"
                   value={form.question}
@@ -536,7 +725,7 @@ export default function ChatbotAdminPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Answer *</label>
+                <label className="form-label">Answer <span style={{ color: '#DC2626' }}>*</span></label>
                 <textarea
                   className="form-textarea"
                   rows={4}
@@ -581,16 +770,11 @@ export default function ChatbotAdminPage() {
               </div>
 
               <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <input
-                  type="checkbox"
-                  id="isActive"
-                  checked={form.isActive}
-                  onChange={(e) => handleFieldChange('isActive', e.target.checked)}
-                  style={{ width: 16, height: 16 }}
+                <Toggle
+                  value={!!form.isActive}
+                  onChange={(val) => handleFieldChange('isActive', val)}
                 />
-                <label htmlFor="isActive" style={{ fontSize: 13, color: 'var(--text-2)', cursor: 'pointer' }}>
-                  Active (visible to patients)
-                </label>
+                <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Active (visible to patients)</span>
               </div>
 
               {/* Keyword preview */}
@@ -626,5 +810,39 @@ export default function ChatbotAdminPage() {
         </div>
       )}
     </div>
+  )
+}
+
+function Toggle({ value, onChange }) {
+  return (
+    <button
+      type="button"
+      style={{
+        width: 44,
+        height: 24,
+        borderRadius: 99,
+        background: value ? '#2563EB' : 'var(--border)',
+        border: 'none',
+        cursor: 'pointer',
+        position: 'relative',
+        display: 'block',
+      }}
+      onClick={() => onChange(!value)}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: 3,
+          left: value ? 22 : 3,
+          width: 18,
+          height: 18,
+          background: '#fff',
+          borderRadius: '50%',
+          transition: 'left .2s',
+          display: 'block',
+          boxShadow: '0 1px 3px rgba(0,0,0,.2)',
+        }}
+      />
+    </button>
   )
 }

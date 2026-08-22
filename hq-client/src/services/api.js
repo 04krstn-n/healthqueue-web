@@ -50,6 +50,7 @@ const unwrap = (response, fallback = null) => ({
 export const authApi = {
   login: (email, password) => api.post('/api/auth/login', { email, password }),
   me: () => api.get('/api/auth/me'),
+  logout: () => api.post('/api/auth/logout'),
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -223,6 +224,11 @@ export const notificationsApi = {
   list: () => api.get('/api/notifications').then(r => unwrap(r, [])),
   markRead: (id) => api.put(`/api/notifications/${id}/read`),
   markAllRead: () => api.put('/api/notifications/read-all'),
+}
+
+// ── Audit Logs ────────────────────────────────────────────────────────────────
+export const auditLogsApi = {
+  list: (params) => api.get('/api/audit-logs', { params }),
 }
 
 export default api

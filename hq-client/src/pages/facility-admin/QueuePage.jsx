@@ -18,7 +18,7 @@ const STATUS_BADGE = {
 }
 
 const PATIENT_TYPES = ['Regular', 'Senior Citizen', 'PWD', 'Pregnant', 'Priority']
-const APPT_STATUSES = ['pending', 'confirmed', 'arrived', 'serving', 'completed', 'no_show', 'cancelled', 'rescheduled']
+const APPT_STATUSES = ['pending', 'confirmed', 'arrived', 'serving', 'completed', 'no show', 'cancelled', 'rescheduled']
 
 const INITIAL_WALKIN_FORM = {
   patientName: '',
@@ -283,7 +283,7 @@ export default function QueueAndAppointmentsPage() {
               value={qStatus}
               onChange={(e) => setQStatus(e.target.value)}
             >
-              {['All', 'waiting', 'serving', 'done', 'completed', 'cancelled', 'no_show'].map((status) => (
+              {['All', 'Waiting', 'Serving', 'Done', 'Completed', 'Cancelled', 'No Show'].map((status) => (
                 <option key={status} value={status}>
                   {status === 'All' ? 'All Status' : status}
                 </option>
@@ -478,7 +478,7 @@ export default function QueueAndAppointmentsPage() {
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label className="form-label">Patient Name *</label>
+                <label className="form-label"> Patient Name <span style={{ color: 'var(--error)' }}>*</span> </label>
                 <input
                   className="form-input"
                   value={walkinForm.patientName}
@@ -494,17 +494,20 @@ export default function QueueAndAppointmentsPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Phone</label>
+                <label className="form-label">Phone </label>
                 <input
                   className="form-input"
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={11}
                   value={walkinForm.phone}
-                  placeholder="+63 9XX XXX XXXX"
-                  onChange={(e) => handleWalkinChange('phone', e.target.value)}
+                  placeholder="09XXXXXXXXX"
+                  onChange={(e) => handleWalkinChange('phone', e.target.value.replace(/\D/g, '').slice(0, 11))}
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Service *</label>
+                <label className="form-label">Service <span style={{ color: 'var(--error)' }}>*</span></label>
                 {services.length > 0 ? (
                   <select
                     className="form-select"

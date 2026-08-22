@@ -17,6 +17,13 @@
 .tab:hover { color:var(--text); }
 .tabActive { color:var(--primary); }
 .tabActive::after { content:''; position:absolute; bottom:-2px; left:0; right:0; height:2px; background:var(--primary); border-radius:2px 2px 0 0; }
+.tabCount { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 5px; margin-left:6px; border-radius:99px; background:#DC2626; color:#fff; font-size:10px; font-weight:700; }
+
+/* Escalated tab filter chips */
+.escalatedFilterGroup { display:flex; gap:6px; }
+.filterChip { padding:6px 14px; border:1px solid var(--border); border-radius:99px; background:#fff; cursor:pointer; font-size:12px; font-weight:600; color:var(--text-2); transition:all .15s; }
+.filterChip:hover { background:var(--border-lt); }
+.filterChipActive { background:var(--primary); border-color:var(--primary); color:#fff; }
 
 /* Toolbar */
 .toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

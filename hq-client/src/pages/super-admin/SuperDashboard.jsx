@@ -11,6 +11,7 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { dashboardApi, clinicsApi } from '../../services/api'
+import AuditLogView from './AuditLogView'
 import styles from './super-admin.module.css'
 
 const STATUS_BADGE = {
@@ -32,6 +33,7 @@ const STAT_THEMES = {
 }
 
 export default function SuperDashboard() {
+  const [view, setView] = useState('dashboard') // 'dashboard' | 'audit-log'
   const [metrics, setMetrics] = useState(null)
   const [clinics, setClinics] = useState([])
   const [loading, setLoading] = useState(true)
@@ -124,8 +126,29 @@ export default function SuperDashboard() {
     return { kpis, weeklyTrend, statusBreakdown, recentClinics, alerts }
   }, [metrics, clinics])
 
+  if (view === 'audit-log') {
+    return <AuditLogView onBack={() => setView('dashboard')} />
+  }
+
   return (
     <div className={styles.page}>
+      {/* ── Header ── */}
+      <div className={styles.header}>
+        <div>
+          <div className={styles.title}>Dashboard</div>
+          <div className={styles.sub}>System-wide overview</div>
+        </div>
+        <button className="btn btn-outline" onClick={() => setView('audit-log')} style={{ display: 'flex', gap: 6, alignItems: 'center' }} >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="9" y1="15" x2="15" y2="15" />
+            <line x1="9" y1="11" x2="15" y2="11" />
+          </svg>
+          View Audit Log
+        </button>
+      </div>
+
       {/* ── Stat Cards ── */}
       <div className={styles.statsRow}>
         {kpis.map((kpi) => (

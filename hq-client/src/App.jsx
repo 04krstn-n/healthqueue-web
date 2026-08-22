@@ -14,6 +14,7 @@ import StaffPage           from './pages/facility-admin/StaffPage'
 import PatientsPage        from './pages/facility-admin/PatientsPage'
 import ServicesPage        from './pages/facility-admin/ServicesPage'
 import FacilityReportsPage from './pages/facility-admin/FacilityReportsPage'
+import FacilityAuditLogPage from './pages/facility-admin/AuditLogPage'
 
 // Super Admin
 import SuperDashboard    from './pages/super-admin/SuperDashboard'
@@ -75,6 +76,7 @@ function AppRoutes() {
         <Route path="services"     element={<ServicesPage />} />
         <Route path="reports"      element={<FacilityReportsPage />} />
         <Route path="chatbot"      element={<ChatbotAdminPage />} />
+        <Route path="audit-log"    element={<FacilityAuditLogPage />} />
       </Route>
 
       {/* Super Admin */}

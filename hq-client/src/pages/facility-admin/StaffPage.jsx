@@ -56,7 +56,10 @@ export default function StaffPage() {
   const [formErrors, setFormErrors] = useState({})
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState('')
-
+  const [listView, setListView] = useState('active') // 'active' | 'deactivated'
+  const [deactivateTarget, setDeactivateTarget] = useState(null)
+  const [deactivating, setDeactivating] = useState(false)
+  const [reactivating, setReactivating] = useState(false)
   const toastTimerRef = useRef(null)
 
   const showToast = useCallback((message) => {
@@ -164,6 +167,9 @@ export default function StaffPage() {
     const errors = {}
     if (!form.fullName.trim()) errors.fullName = 'Full name is required'
     if (!form.email.trim()) errors.email = 'Email is required'
+    if (form.phone && !/^\d{11}$/.test(form.phone)) {
+      errors.phone = 'Phone number must contain exactly 11 digits'
+    }
 
     const targetSpecialization =
       form.specialization === 'Other'
@@ -212,14 +218,16 @@ export default function StaffPage() {
     }
   }
 
-  const handleDeactivate = async (id) => {
-    if (!window.confirm('Are you sure you want to deactivate this staff member?')) return
+  const handleReactivate = async (s) => {
+    setReactivating(true)
     try {
-      await staffApi.deactivate(id)
-      showToast('Staff member deactivated')
+      await staffApi.update(s._id, { isActive: true })
+      showToast('Staff member reactivated')
       await loadStaff()
     } catch (e) {
-      showToast(e?.response?.data?.message || 'Failed to deactivate staff member')
+      showToast(e?.response?.data?.message || 'Failed to reactivate staff member')
+    } finally {
+      setReactivating(false)
     }
   }
 
@@ -256,6 +264,8 @@ export default function StaffPage() {
       if (s._id === user?._id) return false
       if (s.role === 'facility_admin' || s.role === 'superadmin') return false
 
+      const matchView = listView === 'active' ? s.isActive : !s.isActive
+
       const specKey = (s.specialization || '').toLowerCase()
       const matchSpec =
         specFilter === 'All' ||
@@ -269,9 +279,18 @@ export default function StaffPage() {
         (s.phone || '').toLowerCase().includes(q) ||
         (s.specialization || '').toLowerCase().includes(q)
 
-      return matchSpec && matchSearch
+      return matchView && matchSpec && matchSearch
     })
-  }, [staff, search, specFilter, user])
+  }, [staff, search, specFilter, user, listView])
+
+  const activeCount = useMemo(
+    () => staff.filter((s) => s.isActive && s._id !== user?._id && s.role !== 'facility_admin' && s.role !== 'superadmin').length,
+    [staff, user]
+  )
+  const inactiveCount = useMemo(
+    () => staff.filter((s) => !s.isActive && s._id !== user?._id && s.role !== 'facility_admin' && s.role !== 'superadmin').length,
+    [staff, user]
+  )
 
   return (
     <div className={styles.page}>
@@ -292,6 +311,41 @@ export default function StaffPage() {
           <strong>No clinic assigned.</strong> Your facility admin account is not linked to a clinic. Ask a System Administrator to assign your account to a clinic.
         </div>
       )}
+
+      {/* Active / Deactivated View Toggle */}
+      <div
+        style={{
+          display: 'flex',
+          background: 'var(--bg-2)',
+          borderRadius: 8,
+          padding: 3,
+          gap: 0,
+          width: 'fit-content',
+          marginBottom: 12,
+        }}
+      >
+        {[
+          ['active', `Active Staff (${activeCount})`],
+          ['deactivated', `Deactivated Staff (${inactiveCount})`],
+        ].map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => setListView(v)}
+            style={{
+              padding: '7px 16px',
+              borderRadius: 6,
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: 12,
+              fontWeight: 600,
+              background: listView === v ? 'var(--primary)' : 'transparent',
+              color: listView === v ? '#fff' : 'var(--text-2)',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <div className="card">
         {/* Header */}
@@ -397,7 +451,7 @@ export default function StaffPage() {
               ) : filteredStaff.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--muted)' }}>
-                    No staff found
+                    {listView === 'active' ? 'No active staff found' : 'No deactivated staff found'}
                   </td>
                 </tr>
               ) : (
@@ -439,20 +493,32 @@ export default function StaffPage() {
                           >
                             Edit
                           </button>
-                          <button
-                            className="btn btn-sm"
-                            style={{
-                              background: 'var(--error-lt)',
-                              color: 'var(--error)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 6,
-                            }}
-                            title="Deactivate"
-                            onClick={() => handleDeactivate(s._id)}
-                          >
-                            Delete
-                          </button>
+                          {s.isActive ? (
+                            <button
+                              className="btn btn-sm"
+                              style={{
+                                background: 'var(--error-lt)',
+                                color: 'var(--error)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                              }}
+                              title="Deactivate"
+                              onClick={() => setDeactivateTarget(s)}
+                            >
+                              Deactivate
+                            </button>
+                          ) : (
+                            <button
+                              className="btn btn-outline btn-sm"
+                              title="Reactivate"
+                              onClick={() => handleReactivate(s)}
+                              disabled={reactivating}
+                              style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                            >
+                              {reactivating ? 'Reactivating…' : 'Reactivate'}
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -520,25 +586,30 @@ export default function StaffPage() {
               <button className="modal-close" onClick={closeModal}>×</button>
             </div>
             <div className="modal-body">
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <FormField
-                  label="Full Name *"
+                  label={ <> Full Name <span style={{ color: 'var(--error)' }}>*</span> </> }
                   value={form.fullName}
                   error={formErrors.fullName}
                   onChange={(val) => handleFieldChange('fullName', val)}
                 />
                 <FormField
-                  label="Email Address *"
+                  label={ <> Email Address <span style={{ color: 'var(--error)' }}>*</span> </> }
                   type="email"
                   value={form.email}
                   error={formErrors.email}
                   onChange={(val) => handleFieldChange('email', val)}
                 />
+                
                 <FormField
                   label="Phone Number"
                   type="tel"
+                  inputMode="numeric"
+                  placeholder="09XXXXXXXXX"
+                  maxLength={11}
                   value={form.phone}
-                  onChange={(val) => handleFieldChange('phone', val)}
+                  error={formErrors.phone}
+                  onChange={(val) => handleFieldChange('phone', val.replace(/\D/g, '').slice(0, 11))}
                 />
                 <SelectField
                   label="Gender"
@@ -547,7 +618,7 @@ export default function StaffPage() {
                   onChange={(val) => handleFieldChange('gender', val)}
                 />
                 <SelectField
-                  label="Specialization *"
+                  label={ <> Specialization <span style={{ color: 'var(--error)' }}>*</span> </> }
                   value={form.specialization}
                   options={[
                     ...SPECIALIZATION_OPTIONS,
@@ -557,7 +628,7 @@ export default function StaffPage() {
                 />
                 {form.specialization === 'Other' && (
                   <FormField
-                    label="Custom Specialization *"
+                  label={ <> Custom Specialization <span style={{ color: 'var(--error)' }}>*</span> </> }
                     value={form.customSpecialization}
                     error={formErrors.specialization}
                     onChange={(val) => handleFieldChange('customSpecialization', val)}
@@ -582,17 +653,49 @@ export default function StaffPage() {
           </div>
         </div>
       )}
+
+      {/* ── DEACTIVATE CONFIRMATION MODAL ── */}
+      {deactivateTarget && (
+        <div className="modal-overlay" onClick={() => setDeactivateTarget(null)}>
+          <div className="modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Deactivate Staff Member</span>
+              <button className="modal-close" onClick={() => setDeactivateTarget(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                Are you sure you want to deactivate{' '}
+                <strong style={{ color: 'var(--text)' }}>{deactivateTarget.fullName}</strong>? They will no longer
+                be able to log in or be assigned to the queue.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setDeactivateTarget(null)}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                style={{ background: 'var(--error)', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6 }}
+                onClick={() => handleDeactivate(deactivateTarget._id)}
+                disabled={deactivating}
+              >
+                {deactivating ? 'Deactivating…' : 'Yes, Deactivate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function FormField({ label, type = 'text', value, error, onChange }) {
+function FormField({ label, type = 'text', inputMode, maxLength, value, error, onChange }) {
   return (
     <div className="form-group">
       <label className="form-label">{label}</label>
       <input
         className="form-input"
         type={type}
+        inputMode={inputMode}
+        maxLength={maxLength}
         autoComplete="off"
         value={value || ''}
         style={{ border: error ? '1px solid #DC2626' : undefined }}

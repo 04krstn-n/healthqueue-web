@@ -95,6 +95,7 @@ const EMPTY_USER_FORM = {
 
 export default function UserManagementPage() {
   const [tab, setTab] = useState('list') // 'list' | 'create'
+  const [listView, setListView] = useState('active') // 'active' | 'deactivated'
   const [toast, setToast] = useState('')
 
   const [users, setUsers] = useState([])
@@ -113,6 +114,8 @@ export default function UserManagementPage() {
   const [assignClinicId, setAssignClinicId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [deactivateTarget, setDeactivateTarget] = useState(null)
+  const [reactivateTarget, setReactivateTarget] = useState(null)
+  const [reactivating, setReactivating] = useState(false)
 
   // Role Management State
   const [showRoleManager, setShowRoleManager] = useState(false)
@@ -247,12 +250,16 @@ export default function UserManagementPage() {
   }
 
   const handleReactivate = async (u) => {
+    setReactivating(true)
     try {
       await usersApi.update(u._id, { isActive: true })
+      setReactivateTarget(null)
       showToast('User reactivated')
       await loadUsers()
     } catch (e) {
       showToast(e?.response?.data?.message || 'Failed to reactivate user.')
+    } finally {
+      setReactivating(false)
     }
   }
 
@@ -343,14 +350,15 @@ export default function UserManagementPage() {
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase()
     return users.filter((u) => {
+      const matchView = listView === 'active' ? u.isActive : !u.isActive
       const matchRole = roleFilter === 'all' || u.role === roleFilter
       const matchSearch =
         !query ||
         u.fullName?.toLowerCase().includes(query) ||
         u.email?.toLowerCase().includes(query)
-      return matchRole && matchSearch
+      return matchView && matchRole && matchSearch
     })
-  }, [users, search, roleFilter])
+  }, [users, search, roleFilter, listView])
 
   const userStats = useMemo(() => {
     return {
@@ -449,6 +457,41 @@ export default function UserManagementPage() {
             </div>
           )}
 
+          {/* Active / Deactivated View Toggle */}
+          <div
+            style={{
+              display: 'flex',
+              background: 'var(--bg-2)',
+              borderRadius: 8,
+              padding: 3,
+              gap: 0,
+              width: 'fit-content',
+              marginBottom: 12,
+            }}
+          >
+            {[
+              ['active', `Active Accounts (${userStats.active})`],
+              ['deactivated', `Deactivated Accounts (${userStats.inactive})`],
+            ].map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setListView(v)}
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: 6,
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 600,
+                  background: listView === v ? 'var(--primary)' : 'transparent',
+                  color: listView === v ? '#fff' : 'var(--text-2)',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <div className="card">
             {/* Toolbar */}
             <div className={styles.toolbar}>
@@ -528,12 +571,12 @@ export default function UserManagementPage() {
                   ) : filteredUsers.length === 0 ? (
                     <tr>
                       <td colSpan={6} style={{ textAlign: 'center', padding: 32, color: 'var(--muted)' }}>
-                        No users found
+                        {listView === 'active' ? 'No active users found' : 'No deactivated users found'}
                       </td>
                     </tr>
                   ) : (
                     filteredUsers.map((u) => (
-                      <tr key={u._id} style={{ opacity: u.isActive ? 1 : 0.55 }}>
+                      <tr key={u._id}>
                         <td>
                           <div style={{ fontWeight: 600, fontSize: 13 }}>{u.fullName}</div>
                           <div style={{ fontSize: 11, color: 'var(--muted)' }}>{u.email}</div>
@@ -573,7 +616,7 @@ export default function UserManagementPage() {
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {u.role === 'facility_admin' && (
+                            {u.role === 'facility_admin' && u.isActive && (
                               <button className="btn btn-primary btn-sm" onClick={() => openAssign(u)}>
                                 Assign Clinic
                               </button>
@@ -587,7 +630,7 @@ export default function UserManagementPage() {
                                 Deactivate
                               </button>
                             ) : (
-                              <button className="btn btn-outline btn-sm" onClick={() => handleReactivate(u)}>
+                              <button className="btn btn-outline btn-sm" onClick={() => setReactivateTarget(u)}>
                                 Reactivate
                               </button>
                             )}
@@ -605,7 +648,7 @@ export default function UserManagementPage() {
 
       {/* ── 2. CREATE USER TAB ── */}
       {tab === 'create' && (
-        <>
+        <div style={{ maxWidth: 640, margin: '0 auto' }}>
           <div className={`card ${styles.banner}`}>
             <div className={styles.bannerIcon}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -686,9 +729,10 @@ export default function UserManagementPage() {
                 <label className="form-label">Phone Number</label>
                 <input
                   className="form-input"
-                  placeholder="+63 9XX XXX XXXX"
+                  placeholder="09XXXXXXXXX"
                   value={userForm.phone}
-                  onChange={(e) => setUserForm((f) => ({ ...f, phone: e.target.value }))}
+                 onChange={(e) => { const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
+                   setUserForm((f) => ({ ...f, phone: digitsOnly })) }}
                 />
               </div>
             </div>
@@ -787,7 +831,7 @@ export default function UserManagementPage() {
               {savingUser ? 'Creating…' : 'Create User'}
             </button>
           </div>
-        </>
+        </div>
       )}
 
       {/* ── ROLE MANAGEMENT DIRECTORY MODAL ── */}
@@ -1032,12 +1076,13 @@ export default function UserManagementPage() {
                   onChange={(e) => setAssignClinicId(e.target.value)}
                 >
                   <option value="">— Remove clinic assignment —</option>
-                  {clinics.map((cl) => (
-                    <option key={cl._id} value={cl._id}>
-                      {cl.name.replace('Hi-Precision Diagnostics - ', '')}
-                      {cl.status === 'open' ? ' ✓' : ''}
-                    </option>
-                  ))}
+                  {clinics
+                    .filter((cl) => cl.status === 'open')
+                    .map((cl) => (
+                      <option key={cl._id} value={cl._id}>
+                        {cl.name.replace('Hi-Precision Diagnostics - ', '')}
+                      </option>
+                    ))}
                 </select>
               </div>
             </div>
@@ -1086,6 +1131,39 @@ export default function UserManagementPage() {
                 onClick={() => handleDeactivate(deactivateTarget)}
               >
                 Yes, Deactivate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── REACTIVATE CONFIRMATION MODAL ── */}
+      {reactivateTarget && (
+        <div className="modal-overlay" onClick={() => setReactivateTarget(null)}>
+          <div className="modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Reactivate User</span>
+              <button className="modal-close" onClick={() => setReactivateTarget(null)}>
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                Are you sure you want to reactivate{' '}
+                <strong style={{ color: 'var(--text)' }}>{reactivateTarget.fullName}</strong>? They will regain
+                access to log in.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setReactivateTarget(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => handleReactivate(reactivateTarget)}
+                disabled={reactivating}
+              >
+                {reactivating ? 'Reactivating…' : 'Yes, Reactivate'}
               </button>
             </div>
           </div>

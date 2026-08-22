@@ -57,7 +57,15 @@ export function AuthProvider({ children }) {
     return u
   }
 
-  const logout = () => {
+  // logout() — best-effort audit log write, then always clear the local session.
+  // The backend call records the logout event; if it fails (offline, server
+  // hiccup, etc.) we still want the user logged out of this device.
+  const logout = async () => {
+    try {
+      await authApi.logout()
+    } catch (_) {
+      // Ignore — clearing local session below is what actually logs the user out.
+    }
     localStorage.removeItem('hq_token')
     localStorage.removeItem('hq_user')
     setUser(null)

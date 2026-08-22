@@ -12,6 +12,7 @@ const {
   getGracePeriodExpiry 
 } = require('../utils/queueHelpers');
 const { HttpStatus } = require('../config/config');
+const { logAction } = require('../utils/auditLog');
 
 const todayRange = () => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
@@ -308,6 +309,16 @@ const callPatient = async (req, res) => {
       gracePeriodExpiresAt: graceExpiry 
     });
 
+    await logAction({
+      actor: req.user,
+      action: 'call',
+      targetType: 'QueueEntry',
+      targetId: entry._id,
+      targetLabel: `Ticket #${entry.queueNumber} — ${entry.patientName}`,
+      clinicId: entry.clinic,
+      details: { serviceName: entry.serviceName },
+    });
+
     return res.status(HttpStatus.OK).json({
       success: true,
       message: 'Patient called. 5-minute grace period timer started.',
@@ -361,6 +372,16 @@ const completePatient = async (req, res) => {
 
     emitQueueUpdate(req, entry.clinic, 'queue_completed', { entryId: entry._id });
 
+    await logAction({
+      actor: req.user,
+      action: 'complete',
+      targetType: 'QueueEntry',
+      targetId: entry._id,
+      targetLabel: `Ticket #${entry.queueNumber} — ${entry.patientName}`,
+      clinicId: entry.clinic,
+      details: { serviceName: entry.serviceName },
+    });
+
     return res.status(HttpStatus.OK).json({
       success: true,
       message: 'Patient consultation completed.',
@@ -390,6 +411,16 @@ const skipPatient = async (req, res) => {
 
     emitQueueUpdate(req, entry.clinic, 'patient_skipped', { entryId: entry._id });
 
+    await logAction({
+      actor: req.user,
+      action: 'skip',
+      targetType: 'QueueEntry',
+      targetId: entry._id,
+      targetLabel: `Ticket #${entry.queueNumber} — ${entry.patientName}`,
+      clinicId: entry.clinic,
+      details: { serviceName: entry.serviceName },
+    });
+
     return res.status(HttpStatus.OK).json({ success: true, message: 'Patient skipped.', entry });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to skip entry.' });
@@ -411,6 +442,16 @@ const markNoShow = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'patient_noshow', { entryId: entry._id });
+
+    await logAction({
+      actor: req.user,
+      action: 'no_show',
+      targetType: 'QueueEntry',
+      targetId: entry._id,
+      targetLabel: `Ticket #${entry.queueNumber} — ${entry.patientName}`,
+      clinicId: entry.clinic,
+      details: { serviceName: entry.serviceName },
+    });
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Marked as no-show.', entry });
   } catch (err) {

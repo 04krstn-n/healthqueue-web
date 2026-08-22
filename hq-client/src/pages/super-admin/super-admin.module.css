@@ -12,7 +12,7 @@
 .header  { display: flex; align-items: flex-start; justify-content: space-between; }
 .title   { font-size: 20px; font-weight: 800; color: var(--text); }
 .sub     { font-size: 13px; color: var(--muted); margin-top: 3px; }
-.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; margin-left: 12px; }
 .controls{ display: flex; align-items: center; justify-content: space-between; }
 
 /* ── Page-level tabs (UsersPage) ───────────────────────────────── */
@@ -82,7 +82,7 @@
 .sectionTitle{ font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border-lt); }
 .formGrid2   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .req         { color: var(--error); }
-.actions     { display: flex; justify-content: flex-end; gap: 10px; }
+.actions     { display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;  }
 .permGroup      { margin-bottom: 16px; }
 .permGroupTitle { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
 .permGrid    { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -116,11 +116,11 @@
 /* FORCE GRID BEHAVIOR */
 .clinicGrid {
   display: grid !important;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important;
-  gap: 24px !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 16px !important;
   align-items: stretch !important;
   width: 100% !important; 
-  padding: 24px 0 !important;
+  padding: 16px 0 !important;
 }
 
 /* Individual Tile */
@@ -128,7 +128,7 @@
   background: var(--card, #fff);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 24px;
+  padding: 16px;
   display: flex !important;
   flex-direction: column !important; 
   height: 100% !important; /* Forces the card to fill the grid row */
@@ -204,8 +204,17 @@
 .clinicActions {
   display: flex;
   gap: 8px;
+  justify-content: center;
+  align-items: center;
   margin-top: auto !important; /* Pushes the buttons to the very bottom */
   padding-top: 8px; 
+}
+
+.clinicActions .btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
 }
 
 /* Base Button Style */
@@ -345,6 +354,7 @@
 }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 @media (max-width: 700px) {
+  .clinicGrid { grid-template-columns: 1fr !important; }
   .rolesGrid { grid-template-columns: 1fr; }
   .permGrid  { grid-template-columns: 1fr; }
 }

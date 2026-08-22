@@ -311,10 +311,10 @@ useEffect(() => {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
                       {[
-                        { label: 'Queued', value: svc.waiting, color: COLORS.waiting, icon: '⏳' },
-                        { label: 'Serving', value: svc.serving, color: COLORS.serving, icon: '👤' },
-                        { label: 'Completed', value: svc.completed, color: COLORS.completed, icon: '✅' },
-                        { label: 'Avg Wait', value: `${svc.avgWait} min`, color: COLORS.avg, icon: '⏱' },
+                        { label: 'Queued', value: svc.waiting, color: COLORS.waiting },
+                        { label: 'Serving', value: svc.serving, color: COLORS.serving },
+                        { label: 'Completed', value: svc.completed, color: COLORS.completed },
+                        { label: 'Avg Wait', value: `${svc.avgWait} min`, color: COLORS.avg },
                       ].map((m) => (
                         <div key={m.label} style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '12px 14px' }}>
                           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>

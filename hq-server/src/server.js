@@ -40,7 +40,7 @@ const server = http.createServer(app);
 // ─── Socket.io Setup for Real-Time Synchronization ────────────────────────────
 const io = new Server(server, {
   cors: {
-    origin: FRONTEND_ORIGINS || 'http://localhost:3000',
+    origin: FRONTEND_ORIGINS,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,
   },
@@ -67,7 +67,7 @@ app.use(helmet());
 app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use(cors({
-  origin: 'http://localhost:3000' || FRONTEND_ORIGINS,
+  origin: FRONTEND_ORIGINS,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,

@@ -32,6 +32,8 @@ export default function ServicesPage() {
   const [editingInfo, setEditingInfo] = useState(false)
   const [infoForm, setInfoForm] = useState({})
   const [savingInfo, setSavingInfo] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
 
   const toastTimerRef = useRef(null)
 
@@ -77,7 +79,16 @@ export default function ServicesPage() {
     loadData()
   }, [loadData])
 
-  // ─── Clinic Info Mutations ───────────────────────────────────────────────────
+  // ───  Clinic Details Mutations ───────────────────────────────────────────────────
+  const openEditInfo = () => {
+    setInfoForm(clinic || {})
+    setEditingInfo(true)
+  }
+
+  const closeEditInfo = () => {
+    setEditingInfo(false)
+  }
+
   const handleSaveInfo = async () => {
     if (!clinic?._id) return
 
@@ -87,9 +98,9 @@ export default function ServicesPage() {
       const updatedData = res?.data || infoForm
       setClinic((prev) => ({ ...prev, ...updatedData }))
       setEditingInfo(false)
-      showToast('Clinic info updated successfully')
+      showToast(' Clinic Details updated successfully')
     } catch (err) {
-      showToast(err?.response?.data?.message || 'Failed to update clinic info')
+      showToast(err?.response?.data?.message || 'Failed to update  clinic Details')
     } finally {
       setSavingInfo(false)
     }
@@ -174,15 +185,17 @@ export default function ServicesPage() {
   }
 
   const handleDeleteService = async (serviceId) => {
-    if (!window.confirm('Are you sure you want to remove this service?')) return
-
+    setDeleting(true)
     try {
       if (!serviceId) throw new Error('Service ID is missing')
       await servicesApi.delete(clinic._id, serviceId)
+      setDeleteTarget(null)
       showToast('Service removed successfully')
       await loadData()
     } catch (err) {
       showToast(err?.response?.data?.message || 'Failed to remove service')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -199,7 +212,7 @@ export default function ServicesPage() {
   }
 
   if (loading) {
-    return <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading clinic info…</div>
+    return <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>Loading  clinic Details…</div>
   }
 
   if (!clinic) {
@@ -221,58 +234,18 @@ export default function ServicesPage() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          {editingInfo ? (
-            <>
-              <button
-                className="btn btn-outline"
-                onClick={() => setEditingInfo(false)}
-                disabled={savingInfo}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleSaveInfo}
-                disabled={savingInfo}
-              >
-                {savingInfo ? 'Saving…' : 'Save Info'}
-              </button>
-            </>
-          ) : (
-            <button className="btn btn-outline" onClick={() => setEditingInfo(true)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-              Edit Clinic Info
-            </button>
-          )}
+          <button className="btn btn-outline" onClick={openEditInfo}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+            Update Clinic Details
+          </button>
           <button className="btn btn-primary" onClick={openAdd}>
             + Add Service
           </button>
         </div>
       </div>
-
-      {/* ── Editable Clinic Info Panel ── */}
-      {editingInfo && (
-        <div className="card" style={{ padding: 20, marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, marginBottom: 14, color: 'var(--text)' }}>
-            Edit Clinic Information
-          </div>
-          <div className={styles.formGrid2}>
-            {CLINIC_INFO_FIELDS.map(([field, label]) => (
-              <div key={field} className="form-group">
-                <label className="form-label">{label}</label>
-                <input
-                  className="form-input"
-                  value={infoForm[field] || ''}
-                  onChange={(e) => setInfoForm((prev) => ({ ...prev, [field]: e.target.value }))}
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* ── Services Table ── */}
       <div className="card" style={{ padding: 20 }}>
@@ -346,7 +319,7 @@ export default function ServicesPage() {
                           background: 'var(--error-lt)',
                           border: 'none',
                         }}
-                        onClick={() => handleDeleteService(svc._id)}
+                        onClick={() => setDeleteTarget(svc)}
                       >
                         Remove
                       </button>
@@ -358,6 +331,48 @@ export default function ServicesPage() {
           </table>
         )}
       </div>
+
+      {/* ── Update Clinic Details Modal ── */}
+      {editingInfo && (
+        <div className="modal-overlay" onClick={closeEditInfo}>
+          <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Update Clinic Details</span>
+              <button className="modal-close" onClick={closeEditInfo}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 16, rowGap: 20 }}>
+                {CLINIC_INFO_FIELDS.map(([field, label]) => (
+                  <div key={field} className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label" style={{ display: 'block', marginBottom: 6 }}>{label}</label>
+                    <input
+                      className="form-input"
+                      value={infoForm[field] || ''}
+                      inputMode={field === 'contactNumber' ? 'numeric' : undefined}
+                      maxLength={field === 'contactNumber' ? 11 : undefined}
+                      onChange={(e) => {
+                        let val = e.target.value
+                        if (field === 'contactNumber') {
+                          val = val.replace(/\D/g, '').slice(0, 11)
+                        }
+                        setInfoForm((prev) => ({ ...prev, [field]: val }))
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={closeEditInfo} disabled={savingInfo}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleSaveInfo} disabled={savingInfo}>
+                {savingInfo ? 'Saving…' : 'Save Info'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Add / Edit Service Modal ── */}
       {(modal === 'add' || modal === 'edit') && (
@@ -410,15 +425,11 @@ export default function ServicesPage() {
               </div>
 
               <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
-                <input
-                  type="checkbox"
-                  id="service-avail"
-                  checked={!!form.isAvailable}
-                  onChange={(e) => handleFieldChange('isAvailable', e.target.checked)}
+                <Toggle
+                  value={!!form.isAvailable}
+                  onChange={(val) => handleFieldChange('isAvailable', val)}
                 />
-                <label htmlFor="service-avail" style={{ cursor: 'pointer', color: 'var(--text-2)', fontSize: 13 }}>
-                  Currently available to patients
-                </label>
+                <span style={{ color: 'var(--text-2)', fontSize: 13 }}>Currently available to patients</span>
               </div>
             </div>
 
@@ -474,6 +485,69 @@ export default function ServicesPage() {
           </div>
         </div>
       )}
+
+      {/* ── DELETE SERVICE CONFIRMATION MODAL ── */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Remove Service</span>
+              <button className="modal-close" onClick={() => setDeleteTarget(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                Are you sure you want to remove{' '}
+                <strong style={{ color: 'var(--text)' }}>{deleteTarget.name}</strong>? This cannot be undone.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                style={{ background: 'var(--error)', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6 }}
+                onClick={() => handleDeleteService(deleteTarget._id)}
+                disabled={deleting}
+              >
+                {deleting ? 'Removing…' : 'Yes, Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function Toggle({ value, onChange }) {
+  return (
+    <button
+      type="button"
+      style={{
+        width: 44,
+        height: 24,
+        borderRadius: 99,
+        background: value ? '#2563EB' : 'var(--border)',
+        border: 'none',
+        cursor: 'pointer',
+        position: 'relative',
+        display: 'block',
+      }}
+      onClick={() => onChange(!value)}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: 3,
+          left: value ? 22 : 3,
+          width: 18,
+          height: 18,
+          background: '#fff',
+          borderRadius: '50%',
+          transition: 'left .2s',
+          display: 'block',
+          boxShadow: '0 1px 3px rgba(0,0,0,.2)',
+        }}
+      />
+    </button>
   )
 }

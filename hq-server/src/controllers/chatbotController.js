@@ -9,6 +9,7 @@ const ChatLog = require('../models/ChatLog');
 const QueueEntry = require('../models/QueueEntry');
 const Appointment = require('../models/Appointment');
 const { HttpStatus, OPENAI_API_KEY, RASA_SERVER_URL } = require('../config/config');
+const { logAction } = require('../utils/auditLog');
 
 let openaiClient = null;
 if (OPENAI_API_KEY) {
@@ -284,6 +285,16 @@ const resolveEscalation = async (req, res) => {
     // Let other staff devices viewing this list know it was resolved, so
     // it drops out of "Needs Attention" everywhere, not just this device.
     emitEscalation(req, log.clinicId, { logId: log._id, resolved: true });
+
+    await logAction({
+      actor: req.user,
+      action: 'resolve',
+      targetType: 'ChatLog',
+      targetId: log._id,
+      targetLabel: (log.message || '').slice(0, 80),
+      clinicId: log.clinicId,
+      details: { note: note || '' },
+    });
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Escalation resolved.', log });
   } catch (err) {

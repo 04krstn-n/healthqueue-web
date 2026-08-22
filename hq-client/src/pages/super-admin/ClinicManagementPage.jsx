@@ -20,7 +20,7 @@ const FACILITY_TYPES = [
   'Lying-in Clinic',
 ]
 
-const STATUS_OPTIONS = ['open', 'closed', 'maintenance', 'active', 'inactive']
+const STATUS_OPTIONS = ['Open', 'Closed', 'Maintenance', 'Active', 'Inactive']
 
 const EMPTY_FORM = {
   name: '',
@@ -34,7 +34,7 @@ const EMPTY_FORM = {
   maxQueueCapacity: 60,
   acceptsWalkIn: true,
   acceptsAppointment: true,
-  status: 'open',
+  status: 'Open',
   facilityType: 'City Health Center',
   services: [],
 }
@@ -106,7 +106,7 @@ export default function ClinicManagementPage() {
       maxQueueCapacity: clinic.maxQueueCapacity || 60,
       acceptsWalkIn: clinic.acceptsWalkIn ?? true,
       acceptsAppointment: clinic.acceptsAppointment ?? true,
-      status: clinic.status || 'open',
+      status: clinic.status || 'Open',
       facilityType: clinic.facilityType || 'City Health Center',
       services: clinic.services || [],
     })
@@ -141,6 +141,9 @@ export default function ClinicManagementPage() {
     }
     if (!form.city.trim()) {
       errors.city = 'City is required'
+    }
+    if (form.contactNumber && !/^\d{11}$/.test(form.contactNumber)) {
+      errors.contactNumber = 'Contact number must contain exactly 11 digits'
     }
 
     if (Object.keys(errors).length > 0) {
@@ -322,10 +325,12 @@ export default function ClinicManagementPage() {
 
               {/* Action Buttons */}
               <div className={styles.clinicActions} style={{ marginTop: 12 }}>
-                <button className="btn btn-outline" style={{ flex: 1, fontSize: 12 }} onClick={() => openView(c)}>
+                <button className="btn btn-outline" style={{ flex: 0, fontSize: 12, padding: '6px 50px',
+                  }} onClick={() => openView(c)}>
                   View
                 </button>
-                <button className="btn btn-outline" style={{ flex: 1, fontSize: 12 }} onClick={() => openEdit(c)}>
+                <button className="btn btn-outline" style={{  flex: 0, fontSize: 12, padding: '6px 50px', }} 
+                onClick={() => openEdit(c)}>
                   Edit
                 </button>
                 <button
@@ -333,7 +338,7 @@ export default function ClinicManagementPage() {
                   style={{
                     flex: 0,
                     fontSize: 12,
-                    padding: '6px 10px',
+                    padding: '6px 50px',
                     color: 'var(--error)',
                     background: 'var(--error-lt)',
                     border: 'none',
@@ -361,7 +366,7 @@ export default function ClinicManagementPage() {
             <div className="modal-body">
               <div className={styles.formGrid2}>
                 <FormField
-                  label="Clinic Name *"
+                  label={<> Clinic Name <span style={{ color: 'var(--error)' }}>*</span> </>}
                   value={form.name}
                   error={formErrors.name}
                   onChange={(val) => handleFieldChange('name', val)}
@@ -381,7 +386,7 @@ export default function ClinicManagementPage() {
                 />
 
                 <FormField
-                  label="City *"
+                  label={<> City <span style={{ color: 'var(--error)' }}>*</span> </>}
                   value={form.city}
                   error={formErrors.city}
                   onChange={(val) => handleFieldChange('city', val)}
@@ -401,8 +406,12 @@ export default function ClinicManagementPage() {
 
                 <FormField
                   label="Contact Number"
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={11}
                   value={form.contactNumber}
-                  onChange={(val) => handleFieldChange('contactNumber', val)}
+                  error={formErrors.contactNumber}
+                  onChange={(val) => handleFieldChange('contactNumber', val.replace(/\D/g, '').slice(0, 11))}
                 />
 
                 <FormField
@@ -433,24 +442,22 @@ export default function ClinicManagementPage() {
                 />
               </div>
 
-              <div className="form-group" style={{ display: 'flex', gap: 20, marginTop: 12 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={!!form.acceptsWalkIn}
-                    onChange={(e) => handleFieldChange('acceptsWalkIn', e.target.checked)}
+              <div className={styles.formGrid2} style={{ marginTop: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Toggle
+                    value={!!form.acceptsWalkIn}
+                    onChange={(val) => handleFieldChange('acceptsWalkIn', val)}
                   />
                   <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Accepts Walk-in</span>
-                </label>
+                </div>
 
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={!!form.acceptsAppointment}
-                    onChange={(e) => handleFieldChange('acceptsAppointment', e.target.checked)}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Toggle
+                    value={!!form.acceptsAppointment}
+                    onChange={(val) => handleFieldChange('acceptsAppointment', val)}
                   />
                   <span style={{ fontSize: 13, color: 'var(--text-2)' }}>Accepts Appointment</span>
-                </label>
+                </div>
               </div>
             </div>
 
@@ -559,13 +566,15 @@ export default function ClinicManagementPage() {
   )
 }
 
-function FormField({ label, type = 'text', value, error, onChange }) {
+function FormField({ label, type = 'text', inputMode, maxLength, value, error, onChange }) {
   return (
     <div className="form-group">
       <label className="form-label">{label}</label>
       <input
         className="form-input"
         type={type}
+        inputMode={inputMode}
+        maxLength={maxLength}
         value={value ?? ''}
         style={{ border: error ? '1px solid #DC2626' : undefined }}
         onChange={(e) => onChange(e.target.value)}
@@ -576,6 +585,40 @@ function FormField({ label, type = 'text', value, error, onChange }) {
         </div>
       )}
     </div>
+  )
+}
+
+function Toggle({ value, onChange }) {
+  return (
+    <button
+      type="button"
+      style={{
+        width: 44,
+        height: 24,
+        borderRadius: 99,
+        background: value ? '#2563EB' : 'var(--border)',
+        border: 'none',
+        cursor: 'pointer',
+        position: 'relative',
+        display: 'block',
+      }}
+      onClick={() => onChange(!value)}
+    >
+      <span
+        style={{
+          position: 'absolute',
+          top: 3,
+          left: value ? 22 : 3,
+          width: 18,
+          height: 18,
+          background: '#fff',
+          borderRadius: '50%',
+          transition: 'left .2s',
+          display: 'block',
+          boxShadow: '0 1px 3px rgba(0,0,0,.2)',
+        }}
+      />
+    </button>
   )
 }
 

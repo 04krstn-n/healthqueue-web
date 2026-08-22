@@ -3,6 +3,7 @@
  * Access: facility_admin (own clinic), super_admin (any)
  */
 const Clinic = require('../models/Clinic');
+const { logAction } = require('../utils/auditLog');
 
 // Helper for tenant checking
 const isUnauthorizedClinic = (req, targetClinicId) => {
@@ -68,6 +69,17 @@ const addService = async (req, res) => {
     }
 
     const addedService = clinic.services[clinic.services.length - 1];
+
+    await logAction({
+      actor: req.user,
+      action: 'create',
+      targetType: 'Service',
+      targetId: addedService._id,
+      targetLabel: addedService.name,
+      clinicId: targetClinicId,
+      details: { durationMinutes: addedService.durationMinutes, isAvailable: addedService.isAvailable },
+    });
+
     return res.status(201).json(addedService);
   } catch (err) {
     return res.status(500).json({ message: 'Failed to add service.' });
@@ -95,6 +107,17 @@ const updateService = async (req, res) => {
     });
 
     await clinic.save();
+
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'Service',
+      targetId: svc._id,
+      targetLabel: svc.name,
+      clinicId,
+      details: req.body,
+    });
+
     return res.json(svc);
   } catch (err) {
     return res.status(500).json({ message: 'Failed to update service.' });
@@ -110,6 +133,11 @@ const deleteService = async (req, res) => {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
+    // Look up the service name before it's removed, so the audit trail
+    // still shows what was deleted rather than just an id.
+    const before = await Clinic.findById(clinicId).select('services');
+    const removedService = before?.services?.id(serviceId);
+
     // Atomic removal to avoid race conditions
     const clinic = await Clinic.findByIdAndUpdate(
       clinicId,
@@ -118,6 +146,16 @@ const deleteService = async (req, res) => {
     );
 
     if (!clinic) return res.status(404).json({ message: 'Clinic not found.' });
+
+    await logAction({
+      actor: req.user,
+      action: 'delete',
+      targetType: 'Service',
+      targetId: serviceId,
+      targetLabel: removedService?.name || '',
+      clinicId,
+    });
+
     return res.json({ message: 'Service removed.' });
   } catch (err) {
     return res.status(500).json({ message: 'Failed to delete service.' });

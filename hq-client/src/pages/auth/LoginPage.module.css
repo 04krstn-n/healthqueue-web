@@ -202,7 +202,7 @@
 /* Submit */
 .submitBtn {
   width: 100%;
-  padding: 12px;
+  padding:10px 12px;
   background: var(--primary);
   color: #fff;
   border: none;
@@ -241,6 +241,7 @@
   margin-top: 24px;
   font-size: 12px;
   color: var(--muted);
+  text-align: center;
 }
 
 input::-ms-reveal,

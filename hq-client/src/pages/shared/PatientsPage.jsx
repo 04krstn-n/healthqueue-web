@@ -43,6 +43,10 @@ export default function PatientsPage() {
   const [formErrors, setFormErrors] = useState({})
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState('')
+  const [listView, setListView] = useState('active') // 'active' | 'deactivated'
+  const [deactivateTarget, setDeactivateTarget] = useState(null)
+  const [deactivating, setDeactivating] = useState(false)
+  const [reactivating, setReactivating] = useState(false)
 
   const toastTimerRef = useRef(null)
 
@@ -173,15 +177,30 @@ export default function PatientsPage() {
     }
   }
 
-  const handleDeactivate = async (patient) => {
-    if (!window.confirm(`Are you sure you want to deactivate ${patient.fullName}?`)) return
-
+  const handleDeactivate = async (id) => {
+    setDeactivating(true)
     try {
-      await patientsApi.deactivate(patient._id)
+      await patientsApi.deactivate(id)
+      setDeactivateTarget(null)
       showToast('Patient deactivated')
       await loadPatients()
     } catch (e) {
       showToast(e?.response?.data?.message || 'Failed to deactivate patient')
+    } finally {
+      setDeactivating(false)
+    }
+  }
+
+  const handleReactivate = async (patient) => {
+    setReactivating(true)
+    try {
+      await patientsApi.update(patient._id, { isActive: true })
+      showToast('Patient reactivated')
+      await loadPatients()
+    } catch (e) {
+      showToast(e?.response?.data?.message || 'Failed to reactivate patient')
+    } finally {
+      setReactivating(false)
     }
   }
 
@@ -215,6 +234,7 @@ export default function PatientsPage() {
   const filteredPatients = useMemo(() => {
     const query = search.trim().toLowerCase()
     return patients.filter((p) => {
+      const matchView = listView === 'active' ? p.isActive !== false : p.isActive === false
       const matchType = typeFilter === 'all' || p.patientType === typeFilter
       const matchSearch =
         !query ||
@@ -223,9 +243,12 @@ export default function PatientsPage() {
         p.email?.toLowerCase().includes(query) ||
         p.philHealthNumber?.toLowerCase().includes(query)
 
-      return matchType && matchSearch
+      return matchView && matchType && matchSearch
     })
-  }, [patients, search, typeFilter])
+  }, [patients, search, typeFilter, listView])
+
+  const activeCount = useMemo(() => patients.filter((p) => p.isActive !== false).length, [patients])
+  const inactiveCount = useMemo(() => patients.filter((p) => p.isActive === false).length, [patients])
 
   const pageCount = Math.max(1, Math.ceil(filteredPatients.length / PER_PAGE))
   const paginatedPatients = useMemo(() => {
@@ -252,6 +275,43 @@ export default function PatientsPage() {
           {toast}
         </div>
       )}
+
+      {/* Active / Deactivated View Toggle */}
+      <div
+        style={{
+          display: 'flex',
+          background: 'var(--bg-2)',
+          borderRadius: 8,
+          padding: 3,
+          gap: 0,
+          width: 'fit-content',
+        }}
+      >
+        {[
+          ['active', `Active Patients (${activeCount})`],
+          ['deactivated', `Deactivated Patients (${inactiveCount})`],
+        ].map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => {
+              setListView(v)
+              setPage(1)
+            }}
+            style={{
+              padding: '7px 16px',
+              borderRadius: 6,
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: 12,
+              fontWeight: 600,
+              background: listView === v ? 'var(--primary)' : 'transparent',
+              color: listView === v ? '#fff' : 'var(--text-2)',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <div className="card">
         {/* Header */}
@@ -345,7 +405,7 @@ export default function PatientsPage() {
               ) : paginatedPatients.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--muted)' }}>
-                    No patients found
+                    {listView === 'active' ? 'No active patients found' : 'No deactivated patients found'}
                   </td>
                 </tr>
               ) : (
@@ -386,18 +446,32 @@ export default function PatientsPage() {
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                           </svg>
                         </button>
-                        <button
-                          className="btn btn-icon"
-                          style={{ background: 'var(--error-lt)', color: 'var(--error)' }}
-                          title="Deactivate"
-                          onClick={() => handleDeactivate(p)}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <circle cx="12" cy="12" r="10" />
-                            <line x1="15" y1="9" x2="9" y2="15" />
-                            <line x1="9" y1="9" x2="15" y2="15" />
-                          </svg>
-                        </button>
+                        {p.isActive === false ? (
+                          <button
+                            className="btn btn-icon btn-outline"
+                            title="Reactivate"
+                            onClick={() => handleReactivate(p)}
+                            disabled={reactivating}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="23 4 23 10 17 10" />
+                              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                            </svg>
+                          </button>
+                        ) : (
+                          <button
+                            className="btn btn-icon"
+                            style={{ background: 'var(--error-lt)', color: 'var(--error)' }}
+                            title="Deactivate"
+                            onClick={() => setDeactivateTarget(p)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10" />
+                              <line x1="15" y1="9" x2="9" y2="15" />
+                              <line x1="9" y1="9" x2="15" y2="15" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -507,6 +581,7 @@ export default function PatientsPage() {
 
               <FormField
                 label="Phone"
+                placeholder="09XXXXXXXXX"
                 value={form.phone}
                 onChange={(val) => handleFieldChange('phone', val)}
               />
@@ -584,6 +659,36 @@ export default function PatientsPage() {
               <button className="btn btn-outline" onClick={closeModal}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saving…' : modal === 'edit' ? 'Save Changes' : 'Add Patient'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DEACTIVATE CONFIRMATION MODAL ── */}
+      {deactivateTarget && (
+        <div className="modal-overlay" onClick={() => setDeactivateTarget(null)}>
+          <div className="modal" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Deactivate Patient</span>
+              <button className="modal-close" onClick={() => setDeactivateTarget(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
+                Are you sure you want to deactivate{' '}
+                <strong style={{ color: 'var(--text)' }}>{deactivateTarget.fullName}</strong>? Their record
+                will be marked inactive.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-outline" onClick={() => setDeactivateTarget(null)}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                style={{ background: 'var(--error)', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: 6 }}
+                onClick={() => handleDeactivate(deactivateTarget._id)}
+                disabled={deactivating}
+              >
+                {deactivating ? 'Deactivating…' : 'Yes, Deactivate'}
               </button>
             </div>
           </div>
