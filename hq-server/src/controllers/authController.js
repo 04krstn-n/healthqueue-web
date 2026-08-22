@@ -63,6 +63,21 @@ const register = async (req, res) => {
     // to call in every environment.
     const smsResult = await sendOTP(user.phone, otpCode);
 
+    if (!smsResult.mock && !smsResult.success) {
+      // The account was already created, but the OTP text failed to go out
+      // (bad number, no SMS credits, Semaphore auth issue, etc). Surface the
+      // real reason instead of silently claiming success — devOtp lets the
+      // person still test/verify while the SMS issue is being fixed.
+      console.error(`OTP SMS failed for ${user.phone}:`, smsResult.error);
+      return res.status(HttpStatus.CREATED).json({
+        success: true,
+        message: `Account created, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
+        userId: user._id,
+        phone: user.phone,
+        devOtp: otpCode,
+      });
+    }
+
     return res.status(HttpStatus.CREATED).json({
       success: true,
       message: smsResult.mock
@@ -167,6 +182,15 @@ const resendOTP = async (req, res) => {
     await user.save();
 
     const smsResult = await sendOTP(user.phone, otpCode);
+
+    if (!smsResult.mock && !smsResult.success) {
+      console.error(`Resend OTP SMS failed for ${user.phone}:`, smsResult.error);
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        message: `Code regenerated, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
+        devOtp: otpCode,
+      });
+    }
 
     return res.status(HttpStatus.OK).json({
       success: true,
