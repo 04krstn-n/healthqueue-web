@@ -67,10 +67,11 @@ app.use(helmet());
 app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use(cors({
-  origin: FRONTEND_ORIGINS || 'http://localhost:3000',
+  origin: FRONTEND_ORIGINS,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
+  origin: 'http://localhost:3000',
 }));
 
 app.use(express.json({ limit: '10mb' }));
