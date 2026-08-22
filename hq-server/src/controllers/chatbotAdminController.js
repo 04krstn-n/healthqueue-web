@@ -85,7 +85,24 @@ const deleteFAQ = async (req, res) => {
 const getChatLogs = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit || '100', 10);
-    const logs = await ChatLog.find({})
+    // This used to fetch ALL clinics' chat logs unfiltered — staff would
+    // either see other clinics' patient conversations mixed in, or (with a
+    // client-side clinic filter applied afterward) end up with nothing
+    // matching their own clinic depending on ordering/limit. Scope it the
+    // same way getEscalatedLogs() already does.
+    const filter = {};
+    // Patients' User accounts don't carry a clinicId, so a chat log only
+    // gets one if the patient app explicitly sent it — many legitimate
+    // logs have clinicId: null. A strict equality filter would silently
+    // hide those, which is very likely the actual cause of "staff not
+    // receiving logs" — so unassigned logs are included alongside the
+    // staff's own clinic instead of being excluded.
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+    } else if (req.query.clinicId) {
+      filter.$or = [{ clinicId: req.query.clinicId }, { clinicId: null }];
+    }
+    const logs = await ChatLog.find(filter)
       .populate('patient', 'fullName email')
       .sort({ createdAt: -1 })
       .limit(limit);
@@ -226,9 +243,16 @@ const testChatbot = async (req, res) => {
 // ── GET /api/chatbot-admin/escalated ──────────────────────────────────────────
 const getEscalatedLogs = async (req, res) => {
   try {
-    const { clinicId, resolved } = req.query;
+    const { resolved } = req.query;
     const filter = { isEscalated: true };
-    if (clinicId) filter.clinicId = clinicId;
+    // Same reasoning as getChatLogs: don't strictly exclude logs with no
+    // clinicId — a patient's account isn't clinic-scoped, so this equality
+    // filter was very likely hiding real escalations from staff.
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+    } else if (req.query.clinicId) {
+      filter.$or = [{ clinicId: req.query.clinicId }, { clinicId: null }];
+    }
     if (resolved === 'true') filter.resolvedByStaff = true;
     if (resolved === 'false') filter.resolvedByStaff = false;
     const logs = await ChatLog.find(filter)

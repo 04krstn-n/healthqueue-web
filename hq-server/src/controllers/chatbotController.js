@@ -215,6 +215,11 @@ const resolveEscalation = async (req, res) => {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Chat log not found.' });
     }
 
+    // Let other staff devices viewing this list know it was resolved, so
+    // it drops out of "Needs Attention" everywhere, not just this device.
+    const io = req.app.get('io');
+    if (io) io.emit('chat_escalated', { logId: log._id, resolved: true });
+
     return res.status(HttpStatus.OK).json({ success: true, message: 'Escalation resolved.', log });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to resolve escalation.' });

@@ -447,6 +447,40 @@ const cancelEntry = async (req, res) => {
   }
 };
 
+// PUT /api/queues/:id/requeue — Brings a called/skipped/no-show entry back to
+// "waiting" so it isn't permanently stuck with no valid action.
+const requeueEntry = async (req, res) => {
+  try {
+    const entry = await QueueEntry.findById(req.params.id);
+    if (!entry) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
+    }
+
+    const requeueable = ['called', 'skipped', 'no_show'];
+    if (!requeueable.includes(entry.status)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `Cannot requeue an entry with status "${entry.status}".`,
+      });
+    }
+
+    await QueueEntry.findByIdAndUpdate(entry._id, {
+      $set: { status: 'waiting' },
+      $unset: { calledAt: '', gracePeriodExpiresAt: '' },
+    });
+
+    // skip/no-show decremented the live counter — restore it now that the
+    // patient is back in the active queue.
+    await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: 1 } });
+
+    emitQueueUpdate(req, entry.clinic, 'queue_requeued', { entryId: entry._id });
+
+    return res.status(HttpStatus.OK).json({ success: true, message: 'Patient returned to waiting.', entry });
+  } catch (err) {
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to requeue entry.' });
+  }
+};
+
 // GET /api/queues/metrics — Excludes cancelled transactions from average wait time
 const getQueueMetrics = async (req, res) => {
   try {
@@ -493,6 +527,12 @@ const addWalkIn = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Patient name is required.' });
     }
 
+    // Contact number is required so the patient can actually receive
+    // call/turn notifications — it used to be optional.
+    if (!phone || !phone.toString().trim()) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Contact number is required for notifications.' });
+    }
+
     const cId = clinicId || req.user.clinicId;
     if (!cId) {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Clinic ID is required.' });
@@ -503,17 +543,14 @@ const addWalkIn = async (req, res) => {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Clinic not found.' });
     }
 
-    // Auto-fetch serviceName from serviceId if needed
-    if (!serviceName && serviceId) {
-      try {
-        const serviceDoc = await Service.findById(serviceId);
-        if (serviceDoc) serviceName = serviceDoc.name || serviceDoc.serviceName;
-      } catch (e) {
-        if (clinic.services?.length > 0) {
-          const matched = clinic.services.id ? clinic.services.id(serviceId) : clinic.services.find(s => s._id?.toString() === serviceId.toString());
-          if (matched) serviceName = matched.name;
-        }
-      }
+    // Auto-fetch serviceName from serviceId — services live embedded on the
+    // Clinic document (added by the Facility Admin via /api/services), there
+    // is no separate Service collection.
+    if (!serviceName && serviceId && clinic.services?.length > 0) {
+      const matched = clinic.services.id
+        ? clinic.services.id(serviceId)
+        : clinic.services.find((s) => s._id?.toString() === serviceId.toString());
+      if (matched) serviceName = matched.name;
     }
 
     if (!serviceName) {
@@ -571,6 +608,7 @@ module.exports = {
   skipPatient,
   markNoShow,
   cancelEntry,
+  requeueEntry,
   getQueueMetrics,
   addWalkIn,
 };

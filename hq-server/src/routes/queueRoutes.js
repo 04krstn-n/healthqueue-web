@@ -5,10 +5,12 @@ const {
   joinQueue,
   getMyQueueStatus,
   callPatient,
+  startService,
   completePatient,
   skipPatient,
   markNoShow,
   cancelEntry,
+  requeueEntry,
   getQueueMetrics,
   addWalkIn,
 } = require('../controllers/queueController');
@@ -31,9 +33,14 @@ router.get('/', staffOrAdmin, getQueueEntries);
 
 // ── 4. Parametric Entry State Mutations ──────────────────────────────────────
 router.put('/:id/call', authorizeRoles('staff', 'facility_admin'), callPatient);
+// Was defined in the controller but never mounted — this is why "called" and
+// "skipped" entries used to get stuck with no way to move them to serving/done.
+router.put('/:id/start-service', authorizeRoles('staff', 'facility_admin'), startService);
 router.put('/:id/complete', authorizeRoles('staff', 'facility_admin'), completePatient);
 router.put('/:id/skip', authorizeRoles('staff', 'facility_admin'), skipPatient);
 router.put('/:id/no-show', authorizeRoles('staff', 'facility_admin'), markNoShow);
 router.put('/:id/cancel', authorizeRoles('staff', 'facility_admin'), cancelEntry); // Controller validates ownership or staff role
+// Brings a called/skipped/no-show entry back to "waiting" so staff aren't stuck.
+router.put('/:id/requeue', authorizeRoles('staff', 'facility_admin'), requeueEntry);
 
 module.exports = router;
