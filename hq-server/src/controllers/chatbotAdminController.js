@@ -286,6 +286,8 @@ const getEscalatedLogs = async (req, res) => {
     if (resolved === 'false') filter.resolvedByStaff = false;
     const logs = await ChatLog.find(filter)
       .populate('patient', 'fullName email phone')
+      .populate('clinicId', 'name')
+      .populate('escalatedToStaff', 'fullName role')
       .sort({ escalatedAt: -1 })
       .limit(100);
     return res.status(HttpStatus.OK).json({ success: true, data: logs });
