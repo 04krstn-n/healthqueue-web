@@ -6,11 +6,60 @@ const axios = require('axios');
 const OpenAI = require('openai');
 const FAQ = require('../models/FAQ');
 const ChatLog = require('../models/ChatLog');
+const QueueEntry = require('../models/QueueEntry');
+const Appointment = require('../models/Appointment');
 const { HttpStatus, OPENAI_API_KEY, RASA_SERVER_URL } = require('../config/config');
 
 let openaiClient = null;
 if (OPENAI_API_KEY) {
   openaiClient = new OpenAI({ apiKey: OPENAI_API_KEY });
+}
+
+/**
+ * A patient's User record has no clinicId of its own — that field is only
+ * used for facility_admin/staff. So when the chat widget doesn't explicitly
+ * pass a clinicId, fall back to whichever clinic the patient has already
+ * selected: their most recent active queue entry, then their most recent
+ * upcoming/active appointment. This is what lets an escalation actually
+ * reach that clinic's staff instead of landing as clinicId: null.
+ */
+async function resolvePatientClinicId(patientId) {
+  if (!patientId) return null;
+
+  const activeQueueEntry = await QueueEntry.findOne({
+    patient: patientId,
+    status: { $in: ['Waiting', 'Serving'] },
+  })
+    .sort({ createdAt: -1 })
+    .select('clinic');
+  if (activeQueueEntry?.clinic) return activeQueueEntry.clinic;
+
+  const activeAppointment = await Appointment.findOne({
+    patient: patientId,
+    status: { $in: ['pending', 'confirmed', 'arrived', 'serving'] },
+  })
+    .sort({ appointmentDate: -1 })
+    .select('clinic');
+  if (activeAppointment?.clinic) return activeAppointment.clinic;
+
+  return null;
+}
+
+/**
+ * Notify staff/facility_admin of an escalation — scoped to the clinic's
+ * Socket.io room (see server.js `join_clinic`) instead of a blanket
+ * io.emit(), which was broadcasting every clinic's escalations to every
+ * connected client regardless of which clinic they belonged to.
+ */
+function emitEscalation(req, clinicId, payload) {
+  const io = req.app.get('io');
+  if (!io) return;
+  if (clinicId) {
+    io.to(`clinic_${clinicId}`).emit('chat_escalated', payload);
+  }
+  // super_admin dashboards aren't scoped to a single clinic room, so they
+  // still get a global heads-up alongside the clinic-scoped one.
+  io.emit('global_chat_escalated', { ...payload, clinicId });
 }
 
 // ── FAQ Keyword Match Fallback ───────────────────────────────────────────────
@@ -132,6 +181,13 @@ const handleMessage = async (req, res) => {
       autoEscalate = true;
     }
 
+    // If the widget didn't tell us which clinic this is for, fall back to
+    // whichever clinic the patient has already selected (active queue entry
+    // or appointment) so the log — and any escalation — actually reaches
+    // that clinic's staff instead of sitting unassigned.
+    const resolvedClinicId =
+      clinicId || req.user?.clinicId || (await resolvePatientClinicId(req.user?._id || patientId));
+
     // Record Chat Log & Escalation
     const log = await ChatLog.create({
       patient: req.user?._id || patientId || null,
@@ -143,12 +199,11 @@ const handleMessage = async (req, res) => {
       source,
       isEscalated: autoEscalate,
       escalatedAt: autoEscalate ? new Date() : null,
-      clinicId: clinicId || req.user?.clinicId || null,
+      clinicId: resolvedClinicId || null,
     });
 
     if (autoEscalate) {
-      const io = req.app.get('io');
-      if (io) io.emit('chat_escalated', { logId: log._id, message: log.message });
+      emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message });
     }
 
     return res.status(HttpStatus.OK).json({
@@ -172,23 +227,34 @@ const escalateToStaff = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'logId is required.' });
     }
 
+    const existingLog = await ChatLog.findById(logId);
+    if (!existingLog) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Chat log record not found.' });
+    }
+
+    // Same fallback as handleMessage: prefer an explicit clinicId, then
+    // whatever the log already has, then the patient's active queue
+    // entry/appointment — so a manual "talk to staff" tap still reaches the
+    // right clinic even if the original message was logged before the
+    // patient had a clinic selected.
+    const resolvedClinicId =
+      clinicId ||
+      existingLog.clinicId ||
+      req.user?.clinicId ||
+      (await resolvePatientClinicId(req.user?._id || existingLog.patient));
+
     const log = await ChatLog.findByIdAndUpdate(
       logId,
       {
         isEscalated: true,
         escalatedAt: new Date(),
         escalationNote: note || '',
-        clinicId: clinicId || req.user?.clinicId || null,
+        clinicId: resolvedClinicId || null,
       },
       { new: true }
     );
 
-    if (!log) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Chat log record not found.' });
-    }
-
-    const io = req.app.get('io');
-    if (io) io.emit('chat_escalated', { logId: log._id, note });
+    emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message, note });
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Escalated to staff successfully.', log });
   } catch (err) {
@@ -217,8 +283,7 @@ const resolveEscalation = async (req, res) => {
 
     // Let other staff devices viewing this list know it was resolved, so
     // it drops out of "Needs Attention" everywhere, not just this device.
-    const io = req.app.get('io');
-    if (io) io.emit('chat_escalated', { logId: log._id, resolved: true });
+    emitEscalation(req, log.clinicId, { logId: log._id, resolved: true });
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Escalation resolved.', log });
   } catch (err) {

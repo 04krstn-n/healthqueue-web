@@ -2,6 +2,7 @@
  * SystemConfig Controller — key/value system settings
  */
 const SystemConfig = require('../models/SystemConfig');
+const { logAction } = require('../utils/auditLog');
 
 // GET /api/config
 const getConfigs = async (req, res) => {
@@ -36,6 +37,16 @@ const updateConfig = async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!cfg) return res.status(404).json({ message: 'Config not found.' });
+
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'SystemConfig',
+      targetId: cfg._id,
+      targetLabel: cfg.key,
+      details: { value },
+    });
+
     return res.json(cfg);
   } catch (err) {
     return res.status(500).json({ message: 'Failed to update config.' });
@@ -62,6 +73,15 @@ const createConfig = async (req, res) => {
       label: label || normalizedKey,
       description: description || '',
       group: group || 'General',
+    });
+
+    await logAction({
+      actor: req.user,
+      action: 'create',
+      targetType: 'SystemConfig',
+      targetId: cfg._id,
+      targetLabel: cfg.key,
+      details: { value },
     });
 
     return res.status(201).json(cfg);

@@ -5,6 +5,7 @@
 const mongoose = require('mongoose');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
+const { logAction } = require('../utils/auditLog');
 
 // GET /api/staff
 const getStaff = async (req, res) => {
@@ -144,6 +145,16 @@ const createStaff = async (req, res) => {
       .populate('user', 'email isActive phone')
       .populate('clinic', 'name');
 
+    await logAction({
+      actor: req.user,
+      action: 'create',
+      targetType: 'Staff',
+      targetId: staffDoc._id,
+      targetLabel: staffDoc.fullName,
+      clinicId: targetClinic,
+      details: { role: staffDoc.role, email: staffDoc.email },
+    });
+
     return res.status(201).json(populated);
   } catch (err) {
     if (session) await session.abortTransaction();
@@ -180,6 +191,16 @@ const updateStaff = async (req, res) => {
       .populate('user', 'email isActive phone')
       .populate('clinic', 'name');
 
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'Staff',
+      targetId: member._id,
+      targetLabel: member.fullName,
+      clinicId: member.clinic,
+      details: req.body,
+    });
+
     return res.json(updated);
   } catch (err) {
     return res.status(500).json({ message: 'Failed to update staff member.' });
@@ -202,6 +223,15 @@ const deactivateStaff = async (req, res) => {
     if (member.user) {
       await User.findByIdAndUpdate(member.user, { isActive: false });
     }
+
+    await logAction({
+      actor: req.user,
+      action: 'deactivate',
+      targetType: 'Staff',
+      targetId: member._id,
+      targetLabel: member.fullName,
+      clinicId: member.clinic,
+    });
 
     return res.json({ message: 'Staff member deactivated.' });
   } catch (err) {

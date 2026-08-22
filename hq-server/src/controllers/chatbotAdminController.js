@@ -4,6 +4,7 @@
 const FAQ = require('../models/FAQ');
 const ChatLog = require('../models/ChatLog');
 const { HttpStatus, RASA_SERVER_URL, OPENAI_API_KEY } = require('../config/config');
+const { logAction } = require('../utils/auditLog');
 
 // ── FAQs ──────────────────────────────────────────────────────────────────────
 const getFAQs = async (req, res) => {
@@ -41,6 +42,15 @@ const createFAQ = async (req, res) => {
       createdBy: req.user._id,
     });
 
+    await logAction({
+      actor: req.user,
+      action: 'create',
+      targetType: 'FAQ',
+      targetId: faq._id,
+      targetLabel: faq.question,
+      details: { category: faq.category },
+    });
+
     return res.status(HttpStatus.CREATED).json({ success: true, data: faq });
   } catch (err) {
     console.error('createFAQ error:', err.message);
@@ -65,6 +75,16 @@ const updateFAQ = async (req, res) => {
     }
     const faq = await FAQ.findByIdAndUpdate(req.params.id, update, { new: true });
     if (!faq) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'FAQ not found.' });
+
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'FAQ',
+      targetId: faq._id,
+      targetLabel: faq.question,
+      details: update,
+    });
+
     return res.status(HttpStatus.OK).json({ success: true, data: faq });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to update FAQ.' });
@@ -75,6 +95,15 @@ const deleteFAQ = async (req, res) => {
   try {
     const faq = await FAQ.findByIdAndDelete(req.params.id);
     if (!faq) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'FAQ not found.' });
+
+    await logAction({
+      actor: req.user,
+      action: 'delete',
+      targetType: 'FAQ',
+      targetId: req.params.id,
+      targetLabel: faq.question,
+    });
+
     return res.status(HttpStatus.OK).json({ success: true, message: 'FAQ deleted.' });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to delete FAQ.' });

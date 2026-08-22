@@ -6,6 +6,7 @@ const InsightsLog = require('../models/InsightsLog');
 const { calculateDistance } = require('../utils/calculateDistance');
 const { generatePrescriptiveInsight } = require('../services/openaiService');
 const { HttpStatus } = require('../config/config');
+const { logAction } = require('../utils/auditLog');
 
 // GET /api/clinics — Retrieves all active clinics
 const getClinics = async (req, res) => {
@@ -47,6 +48,17 @@ const getClinic = async (req, res) => {
 const createClinic = async (req, res) => {
   try {
     const clinic = await Clinic.create(req.body);
+
+    await logAction({
+      actor: req.user,
+      action: 'create',
+      targetType: 'Clinic',
+      targetId: clinic._id,
+      targetLabel: clinic.name,
+      clinicId: clinic._id,
+      details: { status: clinic.status },
+    });
+
     return res.status(HttpStatus.CREATED).json({ success: true, data: clinic });
   } catch (err) {
     return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: err.message });
@@ -60,6 +72,17 @@ const updateClinic = async (req, res) => {
     if (!clinic) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Clinic not found.' });
     }
+
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'Clinic',
+      targetId: clinic._id,
+      targetLabel: clinic.name,
+      clinicId: clinic._id,
+      details: req.body,
+    });
+
     return res.status(HttpStatus.OK).json({ success: true, data: clinic });
   } catch (err) {
     return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: err.message });
@@ -69,7 +92,17 @@ const updateClinic = async (req, res) => {
 // DELETE /api/clinics/:id — Soft delete clinic
 const deleteClinic = async (req, res) => {
   try {
-    await Clinic.findByIdAndUpdate(req.params.id, { isActive: false });
+    const clinic = await Clinic.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+
+    await logAction({
+      actor: req.user,
+      action: 'deactivate',
+      targetType: 'Clinic',
+      targetId: req.params.id,
+      targetLabel: clinic?.name,
+      clinicId: req.params.id,
+    });
+
     return res.status(HttpStatus.OK).json({ success: true, message: 'Clinic deactivated.' });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to deactivate clinic.' });

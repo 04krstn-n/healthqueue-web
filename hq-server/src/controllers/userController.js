@@ -143,7 +143,7 @@ const createUser = async (req, res) => {
 // PUT /api/users/:id
 const updateUser = async (req, res) => {
   try {
-    const { fullName, phone, clinicId, isActive, gender, specialization } = req.body;
+    const { fullName, email, phone, clinicId, isActive, gender, specialization } = req.body;
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found.' });
 
@@ -151,12 +151,29 @@ const updateUser = async (req, res) => {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
+    // Only a super_admin may reassign which clinic an account (e.g. a
+    // facility_admin) belongs to, or edit their login email — a
+    // facility_admin editing their own clinic's staff should never be able
+    // to touch these fields.
+    const wasActive = user.isActive;
+
     if (fullName) user.fullName = fullName;
     if (phone !== undefined) user.phone = phone;
     if (clinicId !== undefined && req.user.role === 'super_admin') user.clinicId = clinicId;
     if (isActive !== undefined) user.isActive = isActive;
     if (gender !== undefined) user.gender = gender;
     if (specialization !== undefined) user.specialization = specialization;
+
+    if (email !== undefined && req.user.role === 'super_admin') {
+      const normalizedEmail = email.toLowerCase().trim();
+      if (normalizedEmail !== user.email) {
+        const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } });
+        if (existing) {
+          return res.status(409).json({ message: 'Email already registered to another account.' });
+        }
+        user.email = normalizedEmail;
+      }
+    }
 
     await user.save();
 
@@ -166,14 +183,22 @@ const updateUser = async (req, res) => {
       if (isActive !== undefined) staffUpdate.isActive = isActive;
       if (gender !== undefined) staffUpdate.gender = gender;
       if (specialization !== undefined) staffUpdate.specialization = specialization;
+      if (email !== undefined && req.user.role === 'super_admin') staffUpdate.email = user.email;
       if (Object.keys(staffUpdate).length > 0) {
         await Staff.findOneAndUpdate({ user: user._id }, staffUpdate);
       }
     }
 
+    // Distinguish reactivation from a generic update so the audit log isn't
+    // just an undifferentiated "update" for every isActive flip.
+    let auditAction = 'update';
+    if (isActive !== undefined && isActive !== wasActive) {
+      auditAction = isActive ? 'reactivate' : 'deactivate';
+    }
+
     await logAction({
       actor: req.user,
-      action: 'update',
+      action: auditAction,
       targetType: 'User',
       targetId: user._id,
       targetLabel: user.fullName,
@@ -276,28 +301,6 @@ const changePassword = async (req, res) => {
   } catch (err) {
     console.error('changePassword:', err.message);
     return res.status(500).json({ message: 'Failed to change password.' });
-  }
-};
-
-exports.getUsers = async (req, res) => {
-  try {
-    const { clinicId, role } = req.query;
-    const filter = {};
-
-    if (clinicId) filter.clinicId = clinicId;
-
-    // Exclude facility admin / super admin accounts from staff queries
-    filter.role = { $nin: ['superadmin', 'facility_admin'] };
-
-    // Or exclude the current user's ID
-    if (req.user?._id) {
-      filter._id = { $ne: req.user._id };
-    }
-
-    const users = await User.find(filter).select('-password');
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: err.message });
   }
 };
 

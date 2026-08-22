@@ -5,6 +5,7 @@ const User = require('../models/User');
 const Patient = require('../models/Patient');
 const { signToken } = require('../utils/token');
 const { HttpStatus } = require('../config/config');
+const { logAction } = require('../utils/auditLog');
 
 /**
  * Generates a 6-digit OTP code
@@ -219,6 +220,19 @@ const login = async (req, res) => {
     }
 
     const token = signToken(user);
+
+    // Only admin/staff logins go to the audit trail — logging every patient
+    // login would drown out the actions the audit log exists to surface.
+    if (['super_admin', 'facility_admin', 'staff'].includes(user.role)) {
+      await logAction({
+        actor: user,
+        action: 'login',
+        targetType: 'User',
+        targetId: user._id,
+        targetLabel: user.fullName,
+        clinicId: user.clinicId,
+      });
+    }
 
     return res.status(HttpStatus.OK).json({
       success: true,
