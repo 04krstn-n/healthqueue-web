@@ -29,7 +29,7 @@ async function resolvePatientClinicId(patientId) {
 
   const activeQueueEntry = await QueueEntry.findOne({
     patient: patientId,
-    status: { $in: ['Waiting', 'Serving'] },
+    status: { $in: ['waiting', 'serving', 'called'] },
   })
     .sort({ createdAt: -1 })
     .select('clinic');

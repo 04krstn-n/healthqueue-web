@@ -67,7 +67,7 @@ app.use(helmet());
 app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 app.use(cors({
-  origin: FRONTEND_ORIGINS,
+  origin: 'http://localhost:3000' || FRONTEND_ORIGINS,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
