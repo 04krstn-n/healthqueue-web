@@ -5,6 +5,7 @@ const Clinic = require('../models/Clinic');
 const InsightsLog = require('../models/InsightsLog');
 const { calculateDistance } = require('../utils/calculateDistance');
 const { generatePrescriptiveInsight } = require('../services/openaiService');
+const { geocodeAddress } = require('../services/geocodeService');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
 
@@ -47,7 +48,34 @@ const getClinic = async (req, res) => {
 // POST /api/clinics — Add clinic (Admin)
 const createClinic = async (req, res) => {
   try {
-    const clinic = await Clinic.create(req.body);
+    const payload = { ...req.body };
+    let geocodeWarning = null;
+
+    // Only auto-geocode when the admin didn't already provide real
+    // coordinates (e.g. from a map-pin picker) — this just fills the gap
+    // for the common case of typing an address and nothing else.
+    const hasExplicitCoords =
+      Number(payload.latitude) !== 0 && Number(payload.longitude) !== 0;
+
+    if (!hasExplicitCoords && (payload.address || payload.city)) {
+      const geo = await geocodeAddress({
+        address: payload.address,
+        city: payload.city,
+        province: payload.province,
+      });
+      if (geo) {
+        payload.latitude = geo.lat;
+        payload.longitude = geo.lng;
+        payload.location = { type: 'Point', coordinates: [geo.lng, geo.lat] };
+        payload.googlePlaceId = geo.placeId;
+      } else {
+        geocodeWarning =
+          'Could not automatically locate this address on the map. ' +
+          'The clinic was saved, but you may want to double-check the address or set its map pin manually.';
+      }
+    }
+
+    const clinic = await Clinic.create(payload);
 
     await logAction({
       actor: req.user,
@@ -59,7 +87,11 @@ const createClinic = async (req, res) => {
       details: { status: clinic.status },
     });
 
-    return res.status(HttpStatus.CREATED).json({ success: true, data: clinic });
+    return res.status(HttpStatus.CREATED).json({
+      success: true,
+      data: clinic,
+      ...(geocodeWarning ? { warning: geocodeWarning } : {}),
+    });
   } catch (err) {
     return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: err.message });
   }
@@ -68,7 +100,30 @@ const createClinic = async (req, res) => {
 // PUT /api/clinics/:id — Update clinic
 const updateClinic = async (req, res) => {
   try {
-    const clinic = await Clinic.findByIdAndUpdate(req.params.id, req.body, { new: true, runValidators: true });
+    const payload = { ...req.body };
+    const addressChanged = payload.address !== undefined || payload.city !== undefined;
+    const hasExplicitCoords =
+      payload.latitude !== undefined && payload.longitude !== undefined &&
+      Number(payload.latitude) !== 0 && Number(payload.longitude) !== 0;
+
+    if (addressChanged && !hasExplicitCoords) {
+      const existing = await Clinic.findById(req.params.id).select('address city province');
+      const geo = await geocodeAddress({
+        address: payload.address ?? existing?.address,
+        city: payload.city ?? existing?.city,
+        province: payload.province ?? existing?.province,
+      });
+      if (geo) {
+        payload.latitude = geo.lat;
+        payload.longitude = geo.lng;
+        payload.location = { type: 'Point', coordinates: [geo.lng, geo.lat] };
+        payload.googlePlaceId = geo.placeId;
+      }
+      // If geocoding fails here, we simply leave the clinic's existing
+      // coordinates untouched rather than blocking the address edit.
+    }
+
+    const clinic = await Clinic.findByIdAndUpdate(req.params.id, payload, { new: true, runValidators: true });
     if (!clinic) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Clinic not found.' });
     }

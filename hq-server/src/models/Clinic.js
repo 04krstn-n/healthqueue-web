@@ -33,6 +33,10 @@ const ClinicSchema = new mongoose.Schema(
       type: { type: String, enum: ['Point'], default: 'Point' },
       coordinates: { type: [Number], default: [0, 0] }, // [longitude, latitude]
     },
+    // Google place_id for the geocoded address — safe to store indefinitely
+    // (unlike raw lat/lng) and lets us re-geocode later without asking the
+    // admin to re-enter the address.
+    googlePlaceId: { type: String, default: null },
 
     contactNumber: { type: String, default: '' },
     email:         { type: String, default: '' },
