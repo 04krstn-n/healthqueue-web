@@ -15,12 +15,14 @@ import {
 } from 'recharts'
 import { dashboardApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
+import AuditLogPage from './AuditLogPage'
 import styles from './facility-admin.module.css'
 
 export default function FacilityDashboard() {
   const { user } = useAuth()
   const clinicId = user?.clinicId
 
+  const [view, setView] = useState('dashboard') // 'dashboard' | 'audit-log'
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -180,8 +182,29 @@ export default function FacilityDashboard() {
     return { kpis, queueByService, pieData, weeklyTrend, recentActivity }
   }, [stats])
 
+  if (view === 'audit-log') {
+    return <AuditLogPage onBack={() => setView('dashboard')} />
+  }
+
   return (
     <div className={styles.page}>
+      {/* ── Header ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>Dashboard</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>Overview for your clinic</div>
+        </div>
+        <button className="btn btn-outline" onClick={() => setView('audit-log')} style={{ display: 'flex', gap: 6, alignItems: 'center' }} >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="9" y1="15" x2="15" y2="15" />
+            <line x1="9" y1="11" x2="15" y2="11" />
+          </svg>
+          View Audit Log
+        </button>
+      </div>
+
       {/* ── KPI Cards ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 16, marginBottom: 20 }}>
         {kpis.map((card) => (

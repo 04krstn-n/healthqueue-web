@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { io } from 'socket.io-client'
 import { clinicsApi, dashboardApi, queueApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
@@ -64,37 +64,44 @@ export default function QueueOversightPage() {
     loadOversightData()
   }, [loadOversightData])
 
+  // Keep a stable ref to the latest loadOversightData so the socket effect
+  // below doesn't need to reconnect every time the callback identity changes.
+  const loadRef = useRef(loadOversightData)
+  useEffect(() => {
+    loadRef.current = loadOversightData
+  }, [loadOversightData])
+
   // ─── Real-Time Socket Subscription ───────────────────────────────────────────
-useEffect(() => {
-  const targetClinicId = typeof clinicId === 'object' ? clinicId?._id : clinicId
-  if (!targetClinicId) return
+  useEffect(() => {
+    const targetClinicId = typeof clinicId === 'object' ? clinicId?._id : clinicId
+    if (!targetClinicId) return
 
-  const socket = io(SOCKET_URL || 'http://localhost:4000', {
-    transports: ['polling', 'websocket'],
-    withCredentials: true,
-    reconnectionAttempts: 5,
-    reconnectionDelay: 1000,
-  })
+    const socket = io(SOCKET_URL || 'http://localhost:4000', {
+      transports: ['polling', 'websocket'],
+      withCredentials: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    })
 
-  socket.on('connect', () => {
-    socket.emit('join_clinic', String(targetClinicId))
-  })
+    socket.on('connect', () => {
+      socket.emit('join_clinic', String(targetClinicId))
+    })
 
-  const handleUpdate = () => {
-    if (loadRef.current) loadRef.current()
-  }
+    const handleUpdate = () => {
+      if (loadRef.current) loadRef.current()
+    }
 
-  socket.on('queue_updated', handleUpdate)
-  socket.on('patient_called', handleUpdate)
-  socket.on('queue_completed', handleUpdate)
+    socket.on('queue_updated', handleUpdate)
+    socket.on('patient_called', handleUpdate)
+    socket.on('queue_completed', handleUpdate)
 
-  return () => {
-    socket.off('queue_updated', handleUpdate)
-    socket.off('patient_called', handleUpdate)
-    socket.off('queue_completed', handleUpdate)
-    socket.disconnect()
-  }
-}, [clinicId])
+    return () => {
+      socket.off('queue_updated', handleUpdate)
+      socket.off('patient_called', handleUpdate)
+      socket.off('queue_completed', handleUpdate)
+      socket.disconnect()
+    }
+  }, [clinicId])
 
   // ─── Memoized Selectors & Calculations ───────────────────────────────────────
   const services = useMemo(() => {
@@ -106,11 +113,27 @@ useEffect(() => {
   }, [services])
 
   const { serviceStats, bottlenecks, recentActivity } = useMemo(() => {
+    // Exact string equality was silently dropping entries whose serviceName
+    // differs only in case/whitespace from the clinic's service name (e.g.
+    // free-typed walk-ins, or a service renamed after entries joined) —
+    // those entries still showed in Recent Activity (which doesn't filter
+    // by service) but never matched a card, so every card read 0.
+    const norm = (str) => (str || '').trim().toLowerCase()
+
     const rawStats = services.map((svc) => {
-      const svcQueue = queue.filter((q) => q.serviceName === svc.name)
-      const waiting = svcQueue.filter((q) => q.status === 'waiting').length
-      const serving = svcQueue.filter((q) => q.status === 'serving').length
-      const completed = svcQueue.filter((q) => ['done', 'completed'].includes(q.status)).length
+      const svcQueue = queue.filter(
+        (q) =>
+          norm(q.serviceName) === norm(svc.name) ||
+          (q.serviceId && svc._id && String(q.serviceId) === String(svc._id))
+      )
+      // Status comparisons must be case-insensitive: the backend schema
+      // stores 'Waiting' / 'Serving' / 'Done' (capitalized), so a strict
+      // lowercase check here silently matched nothing and kept every card
+      // at 0 even though entries clearly existed (visible in Recent
+      // Activity, which doesn't filter by status at all).
+      const waiting = svcQueue.filter((q) => norm(q.status) === 'waiting').length
+      const serving = svcQueue.filter((q) => norm(q.status) === 'serving').length
+      const completed = svcQueue.filter((q) => ['done', 'completed'].includes(norm(q.status))).length
       const avgWait = svc.durationMinutes || 0
       const isBottleneck = waiting >= 8 || (waiting > 0 && avgWait > 30)
 
@@ -363,13 +386,16 @@ useEffect(() => {
                         {q.queueNumber || '—'}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text)', marginTop: 1 }}>
-                        {q.status === 'waiting'
-                          ? 'Checked in'
-                          : q.status === 'serving'
-                          ? 'Consultation started'
-                          : q.status === 'completed' || q.status === 'done'
-                          ? 'Completed'
-                          : q.status}
+                        {(() => {
+                          const st = (q.status || '').toLowerCase()
+                          if (st === 'waiting') return 'Checked in'
+                          if (st === 'serving') return 'Consultation started'
+                          if (st === 'called') return 'Called'
+                          if (st === 'completed' || st === 'done') return 'Completed'
+                          if (st === 'no_show') return 'No-show'
+                          if (st === 'skipped') return 'Skipped'
+                          return q.status
+                        })()}
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--muted)' }}>{q.serviceName}</div>
                     </div>

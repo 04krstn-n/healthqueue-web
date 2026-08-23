@@ -52,7 +52,7 @@ export default function QueueAndAppointmentsPage() {
   const [aLoading, setALoading] = useState(true)
   const [aSearch, setASearch] = useState('')
   const [aStatus, setAStatus] = useState('All')
-  const [aTab, setATab] = useState('today') // 'today' | 'all'
+  const [aTab, setATab] = useState('today') // 'today' | 'upcoming' | 'past'
 
   const [toast, setToast] = useState('')
 
@@ -86,6 +86,9 @@ export default function QueueAndAppointmentsPage() {
     }
   }, [clinicId, showToast])
 
+  // Fetches the clinic's full appointment list once — Today / Upcoming /
+  // Past are now client-side buckets over the same data (see apptBucket
+  // below), so switching tabs no longer needs a fresh request.
   const loadAppts = useCallback(async () => {
     if (!clinicId) {
       setALoading(false)
@@ -94,11 +97,7 @@ export default function QueueAndAppointmentsPage() {
 
     setALoading(true)
     try {
-      const request = aTab === 'today'
-        ? appointmentsApi.today(clinicId)
-        : appointmentsApi.list({ clinicId })
-
-      const res = await request
+      const res = await appointmentsApi.list({ clinicId })
       setAppts(Array.isArray(res?.data) ? res.data : [])
     } catch {
       setAppts([])
@@ -106,7 +105,7 @@ export default function QueueAndAppointmentsPage() {
     } finally {
       setALoading(false)
     }
-  }, [clinicId, aTab, showToast])
+  }, [clinicId, showToast])
 
   useEffect(() => {
     loadQueue()
@@ -169,9 +168,25 @@ export default function QueueAndAppointmentsPage() {
     })
   }, [queue, qSearch, qStatus])
 
+  // ── Today / Upcoming / Past bucketing ──
+  const { todayStart, todayEnd } = useMemo(() => {
+    const start = new Date(); start.setHours(0, 0, 0, 0)
+    const end = new Date(); end.setHours(23, 59, 59, 999)
+    return { todayStart: start, todayEnd: end }
+  }, [])
+
+  const apptBucket = useCallback((appt) => {
+    if (!appt.appointmentDate) return 'past'
+    const d = new Date(appt.appointmentDate)
+    if (d >= todayStart && d <= todayEnd) return 'today'
+    if (d > todayEnd) return 'upcoming'
+    return 'past'
+  }, [todayStart, todayEnd])
+
   const filteredAppts = useMemo(() => {
     const query = aSearch.trim().toLowerCase()
     return appts.filter((a) => {
+      const matchTab = apptBucket(a) === aTab
       const matchStatus = aStatus === 'All' || a.status === aStatus
       const matchQuery =
         !query ||
@@ -179,21 +194,65 @@ export default function QueueAndAppointmentsPage() {
         a.serviceName?.toLowerCase().includes(query) ||
         a.patientPhone?.toLowerCase().includes(query)
 
-      return matchStatus && matchQuery
+      return matchTab && matchStatus && matchQuery
     })
-  }, [appts, aSearch, aStatus])
+  }, [appts, aSearch, aStatus, aTab, apptBucket])
+
+  // ── CSV Export (rolling last-30-days window) ──
+  const downloadApptsCsv = () => {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 30)
+    cutoff.setHours(0, 0, 0, 0)
+
+    const rows = appts.filter((a) => a.appointmentDate && new Date(a.appointmentDate) >= cutoff)
+
+    if (rows.length === 0) {
+      showToast('No appointments in the last 30 days to export')
+      return
+    }
+
+    const escapeCsv = (val) => {
+      const s = String(val ?? '')
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+
+    const headers = ['Date', 'Time', 'Patient Name', 'Phone', 'Service', 'Patient Type', 'Status']
+    const lines = [
+      headers.join(','),
+      ...rows.map((a) => [
+        a.appointmentDate ? new Date(a.appointmentDate).toLocaleDateString('en-PH') : '',
+        a.timeSlot || '',
+        a.patientName || '',
+        a.patientPhone || '',
+        a.serviceName || '',
+        a.patientType || '',
+        a.status || '',
+      ].map(escapeCsv).join(',')),
+    ]
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `appointments_last_30_days_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
 
   // ─── Queue & Appointment Stats ───────────────────────────────────────────────
-  const { qWaiting, qServing, qCompleted, aPending, aConfirmed, aCompleted } = useMemo(() => {
+  const { qWaiting, qServing, qCompleted, totalToday, aPending, aConfirmed, aCompleted } = useMemo(() => {
     return {
       qWaiting: queue.filter((q) => q.status === 'waiting').length,
       qServing: queue.filter((q) => q.status === 'serving').length,
       qCompleted: queue.filter((q) => ['done', 'completed'].includes(q.status)).length,
+      totalToday: appts.filter((a) => apptBucket(a) === 'today').length,
       aPending: appts.filter((a) => a.status === 'pending').length,
       aConfirmed: appts.filter((a) => a.status === 'confirmed').length,
       aCompleted: appts.filter((a) => a.status === 'completed').length,
     }
-  }, [queue, appts])
+  }, [queue, appts, apptBucket])
 
   return (
     <div className={styles.page}>
@@ -351,7 +410,7 @@ export default function QueueAndAppointmentsPage() {
           {/* Appointment KPI Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 16 }}>
             {[
-              { label: 'Total Today', value: appts.length, color: '#2563EB' },
+              { label: 'Total Today', value: totalToday, color: '#2563EB' },
               { label: 'Pending', value: aPending, color: '#D97706' },
               { label: 'Confirmed', value: aConfirmed, color: '#16A34A' },
               { label: 'Completed', value: aCompleted, color: '#7C3AED' },
@@ -366,9 +425,10 @@ export default function QueueAndAppointmentsPage() {
           </div>
 
           {/* Sub-tabs + Filters */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
             <div style={{ display: 'flex', gap: 0, background: 'var(--bg-2)', borderRadius: 8, padding: 3 }}>
-              {['today', 'all'].map((t) => (
+              {['today', 'upcoming', 'past'].map((t) => (
+                
                 <button
                   key={t}
                   onClick={() => setATab(t)}
@@ -383,11 +443,11 @@ export default function QueueAndAppointmentsPage() {
                     color: aTab === t ? '#fff' : 'var(--text-2)',
                   }}
                 >
-                  {t === 'today' ? "Today's" : 'All Appointments'}
+                  {t === 'today' ? "Today's" : t === 'upcoming' ? 'Upcoming' : 'Past'}
                 </button>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <input
                 className="form-input"
                 style={{ width: 220 }}
@@ -410,6 +470,14 @@ export default function QueueAndAppointmentsPage() {
               </select>
               <button className="btn btn-outline" onClick={loadAppts} disabled={aLoading}>
                 {aLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+              <button className="btn btn-outline" onClick={downloadApptsCsv} disabled={aLoading || appts.length === 0}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Export CSV
               </button>
             </div>
           </div>

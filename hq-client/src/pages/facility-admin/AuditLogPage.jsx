@@ -51,7 +51,7 @@ const ACTION_FILTER_OPTIONS = [
   { value: 'logout', label: 'Logged out' },
 ]
 
-export default function AuditLogPage() {
+export default function AuditLogPage({ onBack }) {
   const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -102,11 +102,18 @@ export default function AuditLogPage() {
           <div className={styles.title}>Audit Log</div>
           <div className={styles.sub}>A record of staff and admin actions at your clinic</div>
         </div>
+        <button className="btn btn-outline" onClick={onBack} style={{ display: 'flex', gap: 6, alignItems: 'center' }} >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="19" y1="12" x2="5" y2="12" />
+            <polyline points="12 19 5 12 12 5" />
+          </svg>
+          Back to Dashboard
+        </button>
       </div>
 
       <div className="card">
         {/* Toolbar */}
-        <div className={styles.toolbar} style={{ marginBottom: 16 }}>
+        <div className={styles.toolbar}>
           <div className="search-bar" style={{ flex: 1, maxWidth: 300 }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" />
