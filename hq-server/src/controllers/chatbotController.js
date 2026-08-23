@@ -189,6 +189,15 @@ const handleMessage = async (req, res) => {
     const resolvedClinicId =
       clinicId || req.user?.clinicId || (await resolvePatientClinicId(req.user?._id || patientId));
 
+    // Escalation is only allowed once the patient has actually selected a
+    // clinic (via an active queue entry or appointment, or an explicit
+    // clinicId) — escalating with no clinic attached means no one's queue
+    // dashboard would ever see it.
+    const willEscalate = autoEscalate && Boolean(resolvedClinicId);
+    if (autoEscalate && !willEscalate) {
+      reply = `${reply}\n\nTo connect you with staff, please join a queue or book an appointment first so we know which clinic to alert.`.trim();
+    }
+
     // Record Chat Log & Escalation
     const log = await ChatLog.create({
       patient: req.user?._id || patientId || null,
@@ -198,12 +207,12 @@ const handleMessage = async (req, res) => {
       response: reply,
       isFallback: source === 'faq',
       source,
-      isEscalated: autoEscalate,
-      escalatedAt: autoEscalate ? new Date() : null,
+      isEscalated: willEscalate,
+      escalatedAt: willEscalate ? new Date() : null,
       clinicId: resolvedClinicId || null,
     });
 
-    if (autoEscalate) {
+    if (willEscalate) {
       emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message });
     }
 
@@ -211,7 +220,7 @@ const handleMessage = async (req, res) => {
       success: true,
       response: reply,
       source,
-      isEscalated: autoEscalate,
+      isEscalated: willEscalate,
       logId: log._id,
     });
   } catch (err) {
@@ -223,14 +232,14 @@ const handleMessage = async (req, res) => {
 // POST /api/chatbot/escalate — Manual patient escalation request
 const escalateToStaff = async (req, res) => {
   try {
-    const { logId, note, clinicId } = req.body;
-    if (!logId) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'logId is required.' });
-    }
+    const { logId, note, clinicId, message } = req.body;
 
-    const existingLog = await ChatLog.findById(logId);
-    if (!existingLog) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Chat log record not found.' });
+    let existingLog = null;
+    if (logId) {
+      existingLog = await ChatLog.findById(logId);
+      if (!existingLog) {
+        return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Chat log record not found.' });
+      }
     }
 
     // Same fallback as handleMessage: prefer an explicit clinicId, then
@@ -240,20 +249,47 @@ const escalateToStaff = async (req, res) => {
     // patient had a clinic selected.
     const resolvedClinicId =
       clinicId ||
-      existingLog.clinicId ||
+      existingLog?.clinicId ||
       req.user?.clinicId ||
-      (await resolvePatientClinicId(req.user?._id || existingLog.patient));
+      (await resolvePatientClinicId(req.user?._id || existingLog?.patient));
 
-    const log = await ChatLog.findByIdAndUpdate(
-      logId,
-      {
+    // Escalation is only allowed once a clinic is actually known — otherwise
+    // staff have no queue/dashboard to receive it on.
+    if (!resolvedClinicId) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Please select a clinic — join a queue or book an appointment — before requesting staff assistance.',
+        requiresClinic: true,
+      });
+    }
+
+    let log;
+    if (existingLog) {
+      log = await ChatLog.findByIdAndUpdate(
+        logId,
+        {
+          isEscalated: true,
+          escalatedAt: new Date(),
+          escalationNote: note || '',
+          clinicId: resolvedClinicId,
+        },
+        { new: true }
+      );
+    } else {
+      // The mobile client's "Talk to staff" shortcut doesn't always have a
+      // prior chat log to attach to — create one so staff still get a
+      // reviewable record instead of the request failing outright.
+      log = await ChatLog.create({
+        patient: req.user?._id || null,
+        senderId: req.user?._id?.toString() || 'anonymous',
+        message: (note || message || 'Patient requested staff assistance.').trim(),
+        source: 'staff',
         isEscalated: true,
         escalatedAt: new Date(),
         escalationNote: note || '',
-        clinicId: resolvedClinicId || null,
-      },
-      { new: true }
-    );
+        clinicId: resolvedClinicId,
+      });
+    }
 
     emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message, note });
 

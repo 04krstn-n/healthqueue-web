@@ -38,10 +38,15 @@ const QueueEntrySchema = new mongoose.Schema(
     notes:       { type: String, default: '' },
 
     // Status
+    // NOTE: values match exactly what queueController.js writes (lowercase /
+    // snake_case). Previously this enum was capitalized ('Waiting', 'Done',
+    // 'Completed', etc.) and didn't even include 'called' as a valid value,
+    // which caused ValidationErrors (500s) on any status transition that
+    // goes through entry.save() (complete, cancel).
     status: {
       type: String,
-      enum: ['Waiting', 'Serving', 'Done', 'Completed', 'No_show', 'Skipped', 'Cancelled'],
-      default: 'Waiting',
+      enum: ['waiting', 'serving', 'called', 'completed', 'skipped', 'no_show', 'cancelled', 'done'],
+      default: 'waiting',
       index: true,
     },
 
@@ -93,7 +98,7 @@ QueueEntrySchema.pre('save', function (next) {
   }
 
   // 2. Calculate total Turnaround Time (TAT) when status is 'completed' or 'done'
-  const isFinished = this.status === 'Completed' || this.status === 'Done';
+  const isFinished = this.status === 'completed' || this.status === 'done';
   const finishTime = this.completedAt || new Date();
 
   if (isFinished && this.joinedAt) {

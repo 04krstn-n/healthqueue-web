@@ -6,6 +6,7 @@ const Patient = require('../models/Patient');
 const { signToken } = require('../utils/token');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
+const { sendOTP } = require('../services/smsService');
 
 /**
  * Generates a 6-digit OTP code
@@ -57,18 +58,30 @@ const register = async (req, res) => {
       patientType: 'Regular',
     });
 
-    // Console log the OTP for local development testing
-    console.log(`\n==================================================`);
-    console.log(`📱 [DEV OTP MOCK] Verification Code for ${user.phone}: [ ${otpCode} ]`);
-    console.log(`==================================================\n`);
+    // Actually send the code via Semaphore SMS. sendSMS() itself falls back to a
+    // console-only mock if SEMAPHORE_API_KEY isn't configured, so this is safe
+    // to call in every environment.
+    const smsResult = await sendOTP(user.phone, otpCode);
+
+    if (!smsResult.mock && !smsResult.success) {
+      console.error(`OTP SMS failed for ${user.phone}:`, smsResult.error);
+      return res.status(HttpStatus.CREATED).json({
+        success: true,
+        message: `Account created, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
+        userId: user._id,
+        phone: user.phone,
+        devOtp: otpCode,
+      });
+    }
 
     return res.status(HttpStatus.CREATED).json({
       success: true,
-      message: 'Registration successful! An OTP code has been generated.',
+      message: smsResult.mock
+        ? 'Registration successful! SMS is not configured, so check the server logs for your OTP.'
+        : 'Registration successful! An OTP code has been sent to your phone.',
       userId: user._id,
       phone: user.phone,
-      // Included for mobile app testing without Semaphore SMS credits
-      devOtp: otpCode, 
+      ...(smsResult.mock ? { devOtp: otpCode } : {}),
     });
   } catch (err) {
     console.error('Register Error:', err.message);
@@ -162,14 +175,23 @@ const resendOTP = async (req, res) => {
     user.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
     await user.save();
 
-    console.log(`\n==================================================`);
-    console.log(`📱 [DEV RESEND OTP] New Code for ${user.phone}: [ ${otpCode} ]`);
-    console.log(`==================================================\n`);
+    const smsResult = await sendOTP(user.phone, otpCode);
+
+    if (!smsResult.mock && !smsResult.success) {
+      console.error(`Resend OTP SMS failed for ${user.phone}:`, smsResult.error);
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        message: `Code regenerated, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
+        devOtp: otpCode,
+      });
+    }
 
     return res.status(HttpStatus.OK).json({
       success: true,
-      message: 'A fresh OTP code has been generated. Check server logs.',
-      devOtp: otpCode,
+      message: smsResult.mock
+        ? 'A fresh OTP code has been generated. SMS is not configured, so check the server logs.'
+        : 'A fresh OTP code has been sent to your phone.',
+      ...(smsResult.mock ? { devOtp: otpCode } : {}),
     });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
@@ -213,10 +235,18 @@ const login = async (req, res) => {
       });
     }
 
-    // Auto-verify seeded/demo accounts if needed
+    // Unverified patient accounts must complete OTP verification before they
+    // can log in — this used to auto-verify on login, which silently bypassed
+    // phone verification entirely. userId is returned so the app can route
+    // straight back to the OTP screen instead of asking the user to register again.
     if (!user.isVerified) {
-      user.isVerified = true;
-      await user.save();
+      return res.status(HttpStatus.FORBIDDEN).json({
+        success: false,
+        message: 'Please verify your phone number before logging in.',
+        userId: user._id,
+        phone: user.phone,
+        requiresVerification: true,
+      });
     }
 
     const token = signToken(user);
@@ -234,6 +264,12 @@ const login = async (req, res) => {
       });
     }
 
+    // Same as getMe — dateOfBirth lives on the linked Patient document.
+    let patientProfile = null;
+    if (user.role === 'patient') {
+      patientProfile = await Patient.findOne({ user: user._id }).select('dateOfBirth');
+    }
+
     return res.status(HttpStatus.OK).json({
       success: true,
       token,
@@ -246,6 +282,7 @@ const login = async (req, res) => {
         role: user.role,
         clinicId: user.clinicId || null,
         isVerified: user.isVerified,
+        dateOfBirth: patientProfile?.dateOfBirth || null,
       },
     });
   } catch (err) {
@@ -268,6 +305,15 @@ const getMe = async (req, res) => {
       });
     }
 
+    // dateOfBirth (and other patient-specific fields captured at mobile
+    // registration) live on the linked Patient document, not User — fetch
+    // it so the profile screen actually receives it instead of silently
+    // missing it.
+    let patientProfile = null;
+    if (user.role === 'patient') {
+      patientProfile = await Patient.findOne({ user: user._id }).select('dateOfBirth');
+    }
+
     return res.status(HttpStatus.OK).json({
       success: true,
       user: {
@@ -281,6 +327,7 @@ const getMe = async (req, res) => {
         clinicName: user.clinicId?.name || null,
         isVerified: user.isVerified,
         isActive: user.isActive,
+        dateOfBirth: patientProfile?.dateOfBirth || null,
       },
     });
   } catch (err) {

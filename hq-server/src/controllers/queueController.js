@@ -292,15 +292,21 @@ const callPatient = async (req, res) => {
       });
     }
 
-    // Trigger push notification
-    await Notification.create({
-      user: entry.patient,
-      title: 'It is your turn!',
-      message: `Ticket #${entry.queueNumber} — Please proceed to the counter within 5 minutes.`,
-      type: 'turn_alert',
-      refType: 'QueueEntry',
-      refId: entry._id,
-    });
+    // Trigger push notification — only when the ticket is linked to a real
+    // patient account. Walk-in tickets (added via /add-walkin) never have a
+    // `patient` user set, and Notification.user is required, so this used
+    // to throw a ValidationError (500 "Failed to call patient") on every
+    // walk-in call.
+    if (entry.patient) {
+      await Notification.create({
+        user: entry.patient,
+        title: 'It is your turn!',
+        message: `Ticket #${entry.queueNumber} — Please proceed to the counter within 5 minutes.`,
+        type: 'turn_alert',
+        refType: 'QueueEntry',
+        refId: entry._id,
+      });
+    }
 
     // Push Socket.io real-time event to patient mobile app
     emitQueueUpdate(req, entry.clinic, 'patient_called', { 
