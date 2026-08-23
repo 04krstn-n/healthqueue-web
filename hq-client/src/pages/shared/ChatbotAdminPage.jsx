@@ -12,6 +12,21 @@ const CAT_BADGE = {
   'Clinic': 'badge-orange',
 }
 
+// Which AI tier actually answered before this got escalated — mirrors the
+// `source` field chatbotController.js saves on every ChatLog ('rasa' |
+// 'openai' | 'faq'). Labels match the ones used in SystemConfigPage's
+// AI Service Status panel so staff see the same names in both places.
+const SOURCE_LABEL = {
+  rasa: 'RasaAI',
+  openai: 'OpenAI',
+  faq: 'FAQ System',
+}
+const SOURCE_BADGE = {
+  rasa: 'badge-green',
+  openai: 'badge-purple',
+  faq: 'badge-gray',
+}
+
 const EMPTY_FORM = {
   question: '',
   answer: '',
@@ -496,7 +511,9 @@ export default function ChatbotAdminPage() {
                       {log.clinicId?.name && (
                         <span className="badge badge-blue">{log.clinicId.name}</span>
                       )}
-                      <span className="badge badge-gray">{log.source || 'faq'}</span>
+                      <span className={`badge ${SOURCE_BADGE[log.source] || 'badge-gray'}`}>
+                        {SOURCE_LABEL[log.source] || 'FAQ System'}
+                      </span>
                     </div>
                     <span className={styles.usageText}>
                       {log.escalatedAt

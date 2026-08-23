@@ -161,11 +161,11 @@ export default function ClinicManagementPage() {
       }
 
       if (modal === 'edit' && selected?._id) {
-        await clinicsApi.update(selected._id, payload)
-        showToast('Clinic updated successfully')
+        const res = await clinicsApi.update(selected._id, payload)
+        showToast(res?.warning || 'Clinic updated successfully')
       } else {
-        await clinicsApi.create(payload)
-        showToast('Clinic added to the system')
+        const res = await clinicsApi.create(payload)
+        showToast(res?.warning || 'Clinic added to the system')
       }
 
       closeModal()

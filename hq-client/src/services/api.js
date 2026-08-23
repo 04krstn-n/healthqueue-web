@@ -44,6 +44,8 @@ api.interceptors.response.use(
 const unwrap = (response, fallback = null) => ({
   ...response,
   data: response?.data?.data ?? fallback,
+  warning: response?.data?.warning ?? null,
+  message: response?.data?.message ?? null,
 })
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
