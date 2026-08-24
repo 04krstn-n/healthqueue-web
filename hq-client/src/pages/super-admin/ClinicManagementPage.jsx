@@ -112,7 +112,7 @@ export default function ClinicManagementPage() {
       maxQueueCapacity: clinic.maxQueueCapacity || 60,
       acceptsWalkIn: clinic.acceptsWalkIn ?? true,
       acceptsAppointment: clinic.acceptsAppointment ?? true,
-      status: (clinic.status || 'open').toLowerCase(),
+      status: (clinic.status || 'Open'),
       facilityType: clinic.facilityType || 'City Health Center',
       services: clinic.services || [],
     })
