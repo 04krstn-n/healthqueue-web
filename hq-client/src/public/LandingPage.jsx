@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import logo from '../../assets/img/hq_logo.png'
+import logo from '../../src/assets/img/hq_logo.png'
+
 import './landing.css'
 
 const BRANCHES = [
