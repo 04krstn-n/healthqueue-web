@@ -48,8 +48,8 @@ const ClinicSchema = new mongoose.Schema(
     
     status: {
       type: String,
-      enum: ['Open', 'Closed', 'Busy', 'Maintenance', 'Active', 'Inactive'],
-      default: 'Open',
+      enum: ['open', 'closed', 'busy', 'maintenance', 'active', 'inactive'],
+      default: 'open',
     },
     maxQueueCapacity:     { type: Number, default: 100 },
     acceptsWalkIn:        { type: Boolean, default: true },

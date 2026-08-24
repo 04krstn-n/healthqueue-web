@@ -21,11 +21,11 @@ const FACILITY_TYPES = [
 ]
 
 const STATUS_OPTIONS = [
-  { value: 'Open', label: 'Open' },
-  { value: 'Closed', label: 'Closed' },
-  { value: 'Maintenance', label: 'Maintenance' },
-  { value: 'Active', label: 'Active' },
-  { value: 'Inactive', label: 'Inactive' },
+  { value: 'open', label: 'Open' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
 ]
 
 const EMPTY_FORM = {
@@ -112,7 +112,7 @@ export default function ClinicManagementPage() {
       maxQueueCapacity: clinic.maxQueueCapacity || 60,
       acceptsWalkIn: clinic.acceptsWalkIn ?? true,
       acceptsAppointment: clinic.acceptsAppointment ?? true,
-      status: (clinic.status || 'Open'),
+      status: (clinic.status || 'open').toLowerCase(),
       facilityType: clinic.facilityType || 'City Health Center',
       services: clinic.services || [],
     })
