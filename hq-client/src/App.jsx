@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
 
 // Public
-import LandingPage from '../public/LandingPage'
+import LandingPage from './public/landingPage'
 
 // Auth
 import LoginPage from './pages/auth/LoginPage'
