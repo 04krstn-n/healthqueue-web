@@ -1,0 +1,31 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap');
+
+/*
+ * Tailwind v4 — scoped import.
+ * We intentionally import only "theme" + "utilities" and skip the default
+ * "base" (Preflight) layer. Preflight resets margins, headings, buttons,
+ * form elements, etc. globally, which would clash with the rest of the
+ * admin dashboard's plain-CSS styling (src/index.css, *.module.css).
+ * This gives the landing page full access to Tailwind utility classes
+ * without touching the rest of the app's look.
+ */
+@import 'tailwindcss/theme' layer(theme);
+@import 'tailwindcss/utilities' layer(utilities);
+
+@theme {
+  --font-display: 'Outfit', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --color-hq-green: #45c245;
+  --color-hq-green-dark: #2ea02e;
+  --color-hq-blue: #1a6fa8;
+  --color-hq-navy: #174e7d;
+  --color-hq-light: #f0f7ff;
+  --color-hq-muted: #6b8cac;
+}
+
+.hq-landing { scroll-behavior: smooth; }
+
+.hq-landing ::-webkit-scrollbar { width: 6px; }
+.hq-landing ::-webkit-scrollbar-track { background: transparent; }
+.hq-landing ::-webkit-scrollbar-thumb { background: #c7d8eb; border-radius: 3px; }
+.hq-landing ::-webkit-scrollbar-thumb:hover { background: #1a6fa8; }
