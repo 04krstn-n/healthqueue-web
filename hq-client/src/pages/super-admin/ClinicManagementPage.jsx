@@ -21,11 +21,11 @@ const FACILITY_TYPES = [
 ]
 
 const STATUS_OPTIONS = [
-  { value: 'open', label: 'Open' },
-  { value: 'closed', label: 'Closed' },
-  { value: 'maintenance', label: 'Maintenance' },
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Inactive' },
+  { value: 'Open', label: 'Open' },
+  { value: 'Closed', label: 'Closed' },
+  { value: 'Maintenance', label: 'Maintenance' },
+  { value: 'Active', label: 'Active' },
+  { value: 'Inactive', label: 'Inactive' },
 ]
 
 const EMPTY_FORM = {
