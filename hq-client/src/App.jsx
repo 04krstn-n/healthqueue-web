@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
 
+// Public
+import LandingPage from './public/LandingPage'
+
 // Auth
 import LoginPage from './pages/auth/LoginPage'
 
@@ -98,7 +101,7 @@ function AppRoutes() {
         <Route path="clinic-management" element={<ClinicManagementPage />} />
       </Route>
 
-      {/* Root redirect */}
+      {/* Root — public landing page for guests, auto-redirect signed-in users to their dashboard */}
       <Route
         path="/"
         element={
@@ -106,10 +109,10 @@ function AppRoutes() {
             ? <Navigate to="/super/dashboard" replace />
             : user?.role === 'facility_admin'
             ? <Navigate to="/facility/dashboard" replace />
-            : <Navigate to="/login" replace />
+            : <LandingPage />
         }
       />
-      <Route path="*" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
