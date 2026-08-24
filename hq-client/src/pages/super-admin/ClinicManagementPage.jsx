@@ -20,7 +20,13 @@ const FACILITY_TYPES = [
   'Lying-in Clinic',
 ]
 
-const STATUS_OPTIONS = ['Open', 'Closed', 'Maintenance', 'Active', 'Inactive']
+const STATUS_OPTIONS = [
+  { value: 'open', label: 'Open' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+]
 
 const EMPTY_FORM = {
   name: '',
@@ -34,7 +40,7 @@ const EMPTY_FORM = {
   maxQueueCapacity: 60,
   acceptsWalkIn: true,
   acceptsAppointment: true,
-  status: 'Open',
+  status: 'open',
   facilityType: 'City Health Center',
   services: [],
 }
@@ -106,7 +112,7 @@ export default function ClinicManagementPage() {
       maxQueueCapacity: clinic.maxQueueCapacity || 60,
       acceptsWalkIn: clinic.acceptsWalkIn ?? true,
       acceptsAppointment: clinic.acceptsAppointment ?? true,
-      status: clinic.status || 'Open',
+      status: (clinic.status || 'open').toLowerCase(),
       facilityType: clinic.facilityType || 'City Health Center',
       services: clinic.services || [],
     })
@@ -157,6 +163,7 @@ export default function ClinicManagementPage() {
         ...form,
         name: form.name.trim(),
         city: form.city.trim(),
+        status: form.status.toLowerCase(),
         maxQueueCapacity: Number(form.maxQueueCapacity) || 60,
       }
 
@@ -192,7 +199,7 @@ export default function ClinicManagementPage() {
   const { filteredClinics, activeCount, totalServicesCount } = useMemo(() => {
     const query = search.trim().toLowerCase()
     const filtered = clinics.filter((c) => {
-      const matchStatus = statusFilter === 'all' || c.status === statusFilter
+      const matchStatus = statusFilter === 'all' || c.status?.toLowerCase() === statusFilter
       const matchSearch =
         !query ||
         c.name?.toLowerCase().includes(query) ||
@@ -202,7 +209,7 @@ export default function ClinicManagementPage() {
       return matchStatus && matchSearch
     })
 
-    const activeCount = clinics.filter((c) => ['active', 'open'].includes(c.status)).length
+    const activeCount = clinics.filter((c) => ['active', 'open'].includes(c.status?.toLowerCase())).length
     const totalServicesCount = clinics.reduce((acc, c) => acc + (c.services?.length || 0), 0)
 
     return {
@@ -288,7 +295,9 @@ export default function ClinicManagementPage() {
                     {c.operatingHours && <span>{c.operatingHours}</span>}
                   </div>
                 </div>
-                <span className={`badge ${STATUS_BADGE[c.status] || 'badge-gray'}`}>{c.status}</span>
+                <span className={`badge ${STATUS_BADGE[c.status?.toLowerCase()] || 'badge-gray'}`}>
+                  {c.status ? c.status.charAt(0).toUpperCase() + c.status.slice(1).toLowerCase() : '—'}
+                </span>
               </div>
 
               {/* Services Tags */}
@@ -491,8 +500,10 @@ export default function ClinicManagementPage() {
               <p><strong>Hours:</strong> {selected.operatingHours || '—'}</p>
               <p>
                 <strong>Status:</strong>{' '}
-                <span className={`badge ${STATUS_BADGE[selected.status] || 'badge-gray'}`}>
-                  {selected.status}
+                <span className={`badge ${STATUS_BADGE[selected.status?.toLowerCase()] || 'badge-gray'}`}>
+                  {selected.status
+                    ? selected.status.charAt(0).toUpperCase() + selected.status.slice(1).toLowerCase()
+                    : '—'}
                 </span>
               </p>
               <p><strong>Max Queue:</strong> {selected.maxQueueCapacity || 60}</p>
@@ -627,11 +638,15 @@ function SelectField({ label, value, options, onChange }) {
     <div className="form-group">
       <label className="form-label">{label}</label>
       <select className="form-select" value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
+        {options.map((o) => {
+          const optValue = typeof o === 'string' ? o : o.value
+          const optLabel = typeof o === 'string' ? o : o.label
+          return (
+            <option key={optValue} value={optValue}>
+              {optLabel}
+            </option>
+          )
+        })}
       </select>
     </div>
   )

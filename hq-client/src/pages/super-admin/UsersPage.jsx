@@ -1077,7 +1077,7 @@ export default function UserManagementPage() {
                 >
                   <option value="">— Remove clinic assignment —</option>
                   {clinics
-                    .filter((cl) => cl.status === 'open')
+                    .filter((cl) => cl.status?.toLowerCase() === 'open')
                     .map((cl) => (
                       <option key={cl._id} value={cl._id}>
                         {cl.name.replace('Hi-Precision Diagnostics - ', '')}
