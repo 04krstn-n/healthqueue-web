@@ -91,14 +91,17 @@ export default function QueueOversightPage() {
       if (loadRef.current) loadRef.current()
     }
 
-    socket.on('queue_updated', handleUpdate)
-    socket.on('patient_called', handleUpdate)
-    socket.on('queue_completed', handleUpdate)
+    // The server never emits a "queue_updated" event — each queue mutation
+    // (call, start-service, complete, skip, no-show, cancel, requeue,
+    // walk-in) fires its own event name AND a catch-all "global_queue_change"
+    // (see queueController.js emitQueueUpdate()). Listening to just
+    // "patient_called"/"queue_completed" silently missed every other queue
+    // state change, so this page could show stale data until a manual
+    // refresh. Subscribing to the catch-all event covers all of them.
+    socket.on('global_queue_change', handleUpdate)
 
     return () => {
-      socket.off('queue_updated', handleUpdate)
-      socket.off('patient_called', handleUpdate)
-      socket.off('queue_completed', handleUpdate)
+      socket.off('global_queue_change', handleUpdate)
       socket.disconnect()
     }
   }, [clinicId])

@@ -136,10 +136,12 @@ export const queueApi = {
   join: (data) => api.post('/api/queues/join', data),
   addWalkin: (data) => api.post('/api/queues/add-walkin', data),
   call: (id) => api.put(`/api/queues/${id}/call`),
+  startService: (id) => api.put(`/api/queues/${id}/start-service`),
   complete: (id) => api.put(`/api/queues/${id}/complete`),
   skip: (id) => api.put(`/api/queues/${id}/skip`),
   noShow: (id) => api.put(`/api/queues/${id}/no-show`),
   cancel: (id) => api.put(`/api/queues/${id}/cancel`),
+  requeue: (id) => api.put(`/api/queues/${id}/requeue`),
 }
 
 // ── Appointments ──────────────────────────────────────────────────────────────

@@ -4,10 +4,12 @@ import styles from './super-admin.module.css'
 
 const STATUS_BADGE = {
   waiting: 'badge-warn',
+  called: 'badge-blue',
   serving: 'badge-blue',
   done: 'badge-green',
   completed: 'badge-green',
   cancelled: 'badge-gray',
+  skipped: 'badge-gray',
   no_show: 'badge-red',
 }
 
@@ -311,6 +313,18 @@ export default function QueueOversightPage() {
                                         Call
                                       </button>
                                     )}
+                                    {q.status === 'called' && (
+                                      <button
+                                        className="btn btn-outline"
+                                        style={{ fontSize: 11, padding: '3px 8px', color: 'var(--info)' }}
+                                        disabled={isBusy}
+                                        onClick={() =>
+                                          handleQueueAction(q._id, queueApi.startService, 'Started service')
+                                        }
+                                      >
+                                        Start Service
+                                      </button>
+                                    )}
                                     {q.status === 'serving' && (
                                       <button
                                         className="btn btn-outline"
@@ -321,6 +335,18 @@ export default function QueueOversightPage() {
                                         }
                                       >
                                         Done
+                                      </button>
+                                    )}
+                                    {(q.status === 'skipped' || q.status === 'no_show') && (
+                                      <button
+                                        className="btn btn-outline"
+                                        style={{ fontSize: 11, padding: '3px 8px' }}
+                                        disabled={isBusy}
+                                        onClick={() =>
+                                          handleQueueAction(q._id, queueApi.requeue, 'Requeued patient')
+                                        }
+                                      >
+                                        Requeue
                                       </button>
                                     )}
                                   </div>
