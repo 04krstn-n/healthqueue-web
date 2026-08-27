@@ -338,4 +338,29 @@ const resolveEscalation = async (req, res) => {
   }
 };
 
-module.exports = { handleMessage, escalateToStaff, resolveEscalation };
+// GET /api/chatbot/history — Patient's own conversation history (last 7
+// days, matching the ChatLog TTL index). No history endpoint previously
+// existed for patients at all — only staff-facing /chatbot-admin/logs and
+// /chatbot-admin/escalated, neither of which a patient can call.
+const getMyChatHistory = async (req, res) => {
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const logs = await ChatLog.find({
+      patient: req.user._id,
+      createdAt: { $gte: sevenDaysAgo },
+    })
+      .sort({ createdAt: 1 })
+      .limit(200)
+      .select('message reply isEscalated resolvedByStaff createdAt');
+
+    return res.status(HttpStatus.OK).json({ success: true, data: logs });
+  } catch (err) {
+    console.error('getMyChatHistory Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: 'Failed to load chat history.',
+    });
+  }
+};
+
+module.exports = { handleMessage, escalateToStaff, resolveEscalation, getMyChatHistory };

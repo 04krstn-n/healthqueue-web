@@ -241,7 +241,7 @@ const cancelMyAppointment = async (req, res) => {
 // GET /api/appointments — Staff/Admin fetches appointments
 const getAppointments = async (req, res) => {
   try {
-    const { clinicId, status, date } = req.query;
+    const { clinicId, status, date, dateFrom, dateTo } = req.query;
     const filter = {};
 
     if (req.user.role === 'facility_admin' && req.user.clinicId) {
@@ -251,7 +251,23 @@ const getAppointments = async (req, res) => {
     }
 
     if (status) filter.status = status;
-    if (date) {
+
+    // dateFrom/dateTo let callers request a multi-day window (e.g. staff
+    // reviewing today + the next few days to confirm upcoming appointments)
+    // instead of only ever fetching one day at a time. `date` (single day)
+    // is kept working as before for existing callers.
+    if (dateFrom || dateTo) {
+      const range = {};
+      if (dateFrom) {
+        const from = new Date(dateFrom); from.setHours(0, 0, 0, 0);
+        range.$gte = from;
+      }
+      if (dateTo) {
+        const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
+        range.$lte = to;
+      }
+      filter.appointmentDate = range;
+    } else if (date) {
       const d = new Date(date);
       const start = new Date(d); start.setHours(0, 0, 0, 0);
       const end   = new Date(d); end.setHours(23, 59, 59, 999);

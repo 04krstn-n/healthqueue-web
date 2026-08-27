@@ -16,11 +16,21 @@ const generateOTPCode = () => Math.floor(100000 + Math.random() * 900000).toStri
 // POST /api/auth/register — Patient self-registration with Mock SMS OTP
 const register = async (req, res) => {
   try {
-    const { fullName, email, phone, password, dateOfBirth } = req.body;
+    const { fullName, email, phone, password, dateOfBirth, gender } = req.body;
     if (!fullName || !email || !password || !phone) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'Name, email, phone number, and password are required.',
+      });
+    }
+
+    // Gender represents sex at birth — registration only offers Male/Female
+    // (an empty/omitted value is still allowed, since gender isn't a
+    // required field, but anything else is rejected).
+    if (gender !== undefined && gender !== '' && !['Male', 'Female'].includes(gender)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Gender must be Male or Female.',
       });
     }
 
@@ -49,12 +59,16 @@ const register = async (req, res) => {
     });
 
     // Create linked Patient profile
+    // NOTE: `gender` was previously never read from req.body here at all,
+    // so it was silently dropped on every registration regardless of what
+    // the client sent — the Profile screen would always show it blank.
     await Patient.create({
       user: user._id,
       fullName: user.fullName,
       email: user.email,
       phone: user.phone,
       dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      gender: gender || '',
       patientType: 'Regular',
     });
 
@@ -264,10 +278,16 @@ const login = async (req, res) => {
       });
     }
 
-    // Same as getMe — dateOfBirth lives on the linked Patient document.
+    // Patient-specific fields (dateOfBirth, gender, patientType, etc.) live
+    // on the linked Patient document. This used to select only
+    // dateOfBirth — see the matching fix in getMe() for why that mattered:
+    // login() is the ONLY data source AppState.login() uses (it doesn't
+    // call refreshProfile() afterward), so gender/patientType/age/PhilHealth/
+    // HMO were structurally unable to reach the app on a fresh login.
     let patientProfile = null;
     if (user.role === 'patient') {
-      patientProfile = await Patient.findOne({ user: user._id }).select('dateOfBirth');
+      patientProfile = await Patient.findOne({ user: user._id })
+        .select('dateOfBirth gender age patientType philHealthNumber hmoProvider');
     }
 
     return res.status(HttpStatus.OK).json({
@@ -283,6 +303,11 @@ const login = async (req, res) => {
         clinicId: user.clinicId || null,
         isVerified: user.isVerified,
         dateOfBirth: patientProfile?.dateOfBirth || null,
+        gender: patientProfile?.gender || '',
+        age: patientProfile?.age ?? null,
+        patientType: patientProfile?.patientType || 'Regular',
+        philHealthNumber: patientProfile?.philHealthNumber || '',
+        hmoNumber: patientProfile?.hmoProvider || '',
       },
     });
   } catch (err) {
@@ -305,13 +330,16 @@ const getMe = async (req, res) => {
       });
     }
 
-    // dateOfBirth (and other patient-specific fields captured at mobile
-    // registration) live on the linked Patient document, not User — fetch
-    // it so the profile screen actually receives it instead of silently
-    // missing it.
+    // Patient-specific fields (dateOfBirth, gender, patientType, etc.) live
+    // on the linked Patient document, not User. This used to select only
+    // dateOfBirth, so gender/patientType/age/PhilHealth/HMO could never
+    // actually reach the mobile app's Profile screen through this endpoint
+    // — those fields only appeared when copied over from local/in-memory
+    // state, not from a genuine fresh fetch (e.g. a new session/device).
     let patientProfile = null;
     if (user.role === 'patient') {
-      patientProfile = await Patient.findOne({ user: user._id }).select('dateOfBirth');
+      patientProfile = await Patient.findOne({ user: user._id })
+        .select('dateOfBirth gender age patientType philHealthNumber hmoProvider');
     }
 
     return res.status(HttpStatus.OK).json({
@@ -328,6 +356,11 @@ const getMe = async (req, res) => {
         isVerified: user.isVerified,
         isActive: user.isActive,
         dateOfBirth: patientProfile?.dateOfBirth || null,
+        gender: patientProfile?.gender || '',
+        age: patientProfile?.age ?? null,
+        patientType: patientProfile?.patientType || 'Regular',
+        philHealthNumber: patientProfile?.philHealthNumber || '',
+        hmoNumber: patientProfile?.hmoProvider || '',
       },
     });
   } catch (err) {

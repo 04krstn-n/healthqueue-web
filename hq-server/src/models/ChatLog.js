@@ -33,4 +33,13 @@ const ChatLogSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// 7-day retention: conversations older than this are no longer useful for
+// the patient to review and would otherwise accumulate forever (there was
+// previously no expiry/cleanup at all). MongoDB's TTL monitor deletes
+// expired documents in the background (usually within ~60s of expiry, not
+// necessarily instantly) — see getMyChatHistory in chatbotController for
+// the matching application-level cutoff, so a slightly-stale document
+// never appears in a patient's own history even if TTL cleanup lags.
+ChatLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: 7 * 24 * 60 * 60 });
+
 module.exports = mongoose.model('ChatLog', ChatLogSchema);

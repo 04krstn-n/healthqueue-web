@@ -258,11 +258,23 @@ const getMyPatientProfile = async (req, res) => {
 // PUT /api/users/me/patient
 const updateMyPatientProfile = async (req, res) => {
   try {
-    const allowed = ['fullName', 'dateOfBirth', 'age', 'gender', 'phone', 'email', 'address', 'philHealthNumber', 'hmoProvider', 'patientType', 'medicalNotes'];
+    // patientType intentionally excluded: it drives priority queue
+    // placement (see queueController.joinQueue), so it must only be
+    // changeable by staff/admin — via PUT /api/patients/:id — after they've
+    // actually verified the patient (senior citizen ID, PWD ID, etc.), not
+    // self-declared by the patient through their own profile edit.
+    const allowed = ['fullName', 'dateOfBirth', 'age', 'gender', 'phone', 'email', 'address', 'philHealthNumber', 'hmoProvider', 'medicalNotes'];
     const update = {};
     allowed.forEach((field) => {
       if (req.body[field] !== undefined) update[field] = req.body[field];
     });
+
+    // Gender represents sex at birth and is limited to Male/Female at
+    // registration and in profile edits going forward. The schema enum
+    // still allows 'Other'/'' so existing records aren't broken by this.
+    if (update.gender !== undefined && !['Male', 'Female'].includes(update.gender)) {
+      return res.status(400).json({ message: 'Gender must be Male or Female.' });
+    }
 
     const profile = await Patient.findOneAndUpdate(
       { user: req.user._id },

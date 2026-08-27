@@ -39,7 +39,7 @@ router.put('/:id/start-service', authorizeRoles('staff', 'facility_admin'), star
 router.put('/:id/complete', authorizeRoles('staff', 'facility_admin'), completePatient);
 router.put('/:id/skip', authorizeRoles('staff', 'facility_admin'), skipPatient);
 router.put('/:id/no-show', authorizeRoles('staff', 'facility_admin'), markNoShow);
-router.put('/:id/cancel', authorizeRoles('staff', 'facility_admin'), cancelEntry); // Controller validates ownership or staff role
+router.put('/:id/cancel', authorizeRoles('staff', 'facility_admin', 'patient'), cancelEntry); // Controller validates ownership (patient) or role (staff/admin)
 // Brings a called/skipped/no-show entry back to "waiting" so staff aren't stuck.
 router.put('/:id/requeue', authorizeRoles('staff', 'facility_admin'), requeueEntry);
 

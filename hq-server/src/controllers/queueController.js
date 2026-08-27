@@ -73,7 +73,7 @@ const getQueueEntries = async (req, res) => {
 // POST /api/queues/join — Patient remote queue enrollment with en-route tracking
 const joinQueue = async (req, res) => {
   try {
-    let { clinicId, serviceName, serviceId, notes, priority, joinedRemotely } = req.body;
+    let { clinicId, serviceName, serviceId, notes, joinedRemotely } = req.body;
 
     if (!clinicId) {
       return res.status(HttpStatus.BAD_REQUEST).json({ 
@@ -158,6 +158,14 @@ const joinQueue = async (req, res) => {
       joinedAt: todayRange(),
     });
 
+    // Priority is derived ONLY from the patient's own stored record
+    // (patient.patientType), which can only be changed by staff/admin via
+    // PUT /api/patients/:id (see patientController.updatePatient) — this
+    // used to also accept a `priority` boolean straight from the request
+    // body, which let any patient grant themselves priority queue
+    // placement just by adding a field to the join request.
+    const isPriorityPatient = Boolean(patient.patientType && patient.patientType !== 'Regular');
+
     const entry = await QueueEntry.create({
       clinic: clinicId,
       patient: req.user._id,
@@ -167,8 +175,8 @@ const joinQueue = async (req, res) => {
       serviceName,
       serviceId: serviceId || null,
       queueNumber,
-      queueType: (priority || patient.patientType !== 'Regular') ? 'Priority' : 'Regular',
-      priority: priority || false,
+      queueType: isPriorityPatient ? 'Priority' : 'Regular',
+      priority: isPriorityPatient,
       joinedRemotely: joinedRemotely !== undefined ? joinedRemotely : true,
       notes: notes || '',
       estimatedWaitMinutes: estWait,
