@@ -27,8 +27,21 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
-  if (allowed.includes(file.mimetype)) return cb(null, true);
+  const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+  const allowedExts  = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'];
+
+  if (allowedMimes.includes(file.mimetype)) return cb(null, true);
+
+  // Fall back to checking the extension when the mimetype is missing or
+  // generic (e.g. 'application/octet-stream') — mobile clients don't
+  // always set a reliable Content-Type per file part (camera-captured
+  // photos in particular), so trusting the mimetype alone rejected
+  // perfectly valid photos. The extension is still attacker-controllable,
+  // same as the mimetype, so this isn't a security boundary either way —
+  // it's just a better-effort filter than mimetype alone.
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  if (allowedExts.includes(ext)) return cb(null, true);
+
   cb(new Error('Only image files (JPEG, PNG, WEBP, HEIC) are allowed.'));
 };
 
