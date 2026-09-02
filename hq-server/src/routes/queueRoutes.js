@@ -13,6 +13,7 @@ const {
   requeueEntry,
   getQueueMetrics,
   addWalkIn,
+  markOnTheWay,
 } = require('../controllers/queueController');
 const { protect, authorizeRoles, patientOnly } = require('../middleware/auth');
 
@@ -36,6 +37,7 @@ router.put('/:id/call', authorizeRoles('staff', 'facility_admin'), callPatient);
 // Was defined in the controller but never mounted — this is why "called" and
 // "skipped" entries used to get stuck with no way to move them to serving/done.
 router.put('/:id/start-service', authorizeRoles('staff', 'facility_admin'), startService);
+router.put('/:id/on-the-way', patientOnly, markOnTheWay);
 router.put('/:id/complete', authorizeRoles('staff', 'facility_admin'), completePatient);
 router.put('/:id/skip', authorizeRoles('staff', 'facility_admin'), skipPatient);
 router.put('/:id/no-show', authorizeRoles('staff', 'facility_admin'), markNoShow);

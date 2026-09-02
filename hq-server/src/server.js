@@ -30,6 +30,7 @@ const chatbotAdminRoutes = require('./routes/chatbotAdminRoutes');
 const systemConfigRoutes = require('./routes/systemConfigRoutes');
 const analyticsRoutes    = require('./routes/analyticsRoutes');
 const prescriptiveRoutes = require('./routes/prescriptiveRoutes');
+const patientTypeRequestRoutes = require('./routes/patientTypeRequestRoutes');
 const auditLogRoutes     = require('./routes/auditLogRoutes');
 
 // ─── Connect Database ─────────────────────────────────────────────────────────
@@ -117,6 +118,7 @@ app.use('/api/system-config',        systemConfigRoutes);
 app.use('/api/analytics',     analyticsRoutes);
 app.use('/api/prescriptive',  prescriptiveRoutes);
 app.use('/api/audit-logs',    auditLogRoutes);
+app.use('/api/patient-type-requests', patientTypeRequestRoutes);
 
 // ─── Error Handlers ───────────────────────────────────────────────────────────
 app.use(notFound);

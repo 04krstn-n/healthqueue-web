@@ -618,6 +618,42 @@ const requeueEntry = async (req, res) => {
   }
 };
 
+// PUT /api/queues/:id/on-the-way — Patient acknowledges being called and
+// heading to the clinic. Does NOT change queue status (only staff, via
+// start-service, can move called -> serving — see the guard there) — this
+// is purely an informational nudge so staff know a patient is en route
+// before they physically arrive, instead of finding out only once the
+// patient shows up at the counter.
+const markOnTheWay = async (req, res) => {
+  try {
+    const entry = await QueueEntry.findById(req.params.id);
+    if (!entry) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
+    }
+    if (entry.patient?.toString() !== req.user._id.toString()) {
+      return res.status(HttpStatus.FORBIDDEN).json({
+        success: false,
+        message: 'Not authorized for this queue entry.',
+      });
+    }
+    if (entry.status !== 'called') {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `Cannot acknowledge — entry status is "${entry.status}", not "called".`,
+      });
+    }
+
+    emitQueueUpdate(req, entry.clinic, 'patient_on_the_way', {
+      entryId: entry._id,
+      queueNumber: entry.queueNumber,
+    });
+
+    return res.status(HttpStatus.OK).json({ success: true, message: 'Staff notified.' });
+  } catch (err) {
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to notify staff.' });
+  }
+};
+
 // GET /api/queues/metrics — Excludes cancelled transactions from average wait time
 const getQueueMetrics = async (req, res) => {
   try {
@@ -748,4 +784,5 @@ module.exports = {
   requeueEntry,
   getQueueMetrics,
   addWalkIn,
+  markOnTheWay,
 };
