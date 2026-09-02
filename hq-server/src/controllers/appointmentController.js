@@ -181,6 +181,15 @@ const updateAppointment = async (req, res) => {
       });
     }
 
+    // Same rule as updateStatus — a cancelled appointment can't be
+    // rescheduled/edited either, by staff or the patient.
+    if (appt.status === 'cancelled') {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'This appointment was cancelled and cannot be modified.',
+      });
+    }
+
     if (appointmentDate) appt.appointmentDate = new Date(appointmentDate);
     if (timeSlot) appt.timeSlot = timeSlot;
     if (notes) appt.notes = notes;
@@ -394,6 +403,22 @@ const getAppointment = async (req, res) => {
 
 const updateStatus = async (req, res) => {
   try {
+    // A cancelled appointment must stay cancelled — staff should not be
+    // able to "revive" or otherwise modify it once the patient (or staff)
+    // has cancelled it. This used to blindly overwrite whatever status was
+    // sent with no check at all, so a cancelled appointment could silently
+    // be turned back into confirmed/completed/etc. via this same endpoint.
+    const existing = await Appointment.findById(req.params.id).select('status');
+    if (!existing) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Appointment not found.' });
+    }
+    if (existing.status === 'cancelled') {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'This appointment was cancelled and cannot be modified.',
+      });
+    }
+
     const appt = await Appointment.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
 
     if (appt) {

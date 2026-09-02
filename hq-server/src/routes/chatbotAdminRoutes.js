@@ -5,6 +5,7 @@ const {
   getChatLogs, getAnalytics,
   getRasaStatus, testChatbot,
   getEscalatedLogs,
+  clearChatLogs,
 } = require('../controllers/chatbotAdminController');
 const { protect, authorizeRoles } = require('../middleware/auth');
 

@@ -141,6 +141,21 @@ const updateService = async (req, res) => {
       details: req.body,
     });
 
+    // Broadcast so already-open staff tablets and patient apps refresh
+    // immediately instead of only picking this up on their next poll —
+    // reuses the existing `global_queue_change` event both clients already
+    // listen for (see ClinicSocketService / QueueSocketService), so no
+    // client-side socket changes were needed for this to take effect.
+    const io = req.app.get('io');
+    if (io && setOps['services.$[svc].durationMinutes'] !== undefined) {
+      io.to(`clinic_${clinicId}`).emit('global_queue_change', {
+        clinicId,
+        eventName: 'service_duration_updated',
+        serviceId,
+        durationMinutes: setOps['services.$[svc].durationMinutes'],
+      });
+    }
+
     return res.json(svc);
   } catch (err) {
     console.error('updateService Error:', err.message);

@@ -296,6 +296,49 @@ const getEscalatedLogs = async (req, res) => {
   }
 };
 
+// DELETE /api/chatbot-admin/logs — Clears chat logs for the staff's clinic.
+// Scoped the same way getChatLogs/getEscalatedLogs are (clinicId match OR
+// no clinicId set, since a patient's account isn't clinic-scoped) so this
+// can never wipe another clinic's conversation history. Restricted to
+// facility_admin/super_admin (not plain staff) since this is a permanent,
+// irreversible bulk delete — the tablet UI must still confirm with the
+// user before calling this; this endpoint is the actual enforcement, not
+// a substitute for that confirmation.
+const clearChatLogs = async (req, res) => {
+  try {
+    const clinicId = req.user.clinicId || req.query.clinicId;
+    if (!clinicId) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'No clinic scope — cannot determine which logs to clear.',
+      });
+    }
+
+    const result = await ChatLog.deleteMany({
+      $or: [{ clinicId }, { clinicId: null }],
+    });
+
+    await logAction({
+      actor: req.user,
+      action: 'clear_chat_logs',
+      targetType: 'ChatLog',
+      targetId: clinicId,
+      targetLabel: `Cleared ${result.deletedCount} chat log(s)`,
+      clinicId,
+      details: { deletedCount: result.deletedCount },
+    });
+
+    return res.status(HttpStatus.OK).json({
+      success: true,
+      message: `Cleared ${result.deletedCount} chat log(s).`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    console.error('clearChatLogs Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to clear chat logs.' });
+  }
+};
+
 module.exports = {
   getEscalatedLogs,
   getRasaStatus,
@@ -306,4 +349,5 @@ module.exports = {
   deleteFAQ,
   getChatLogs,
   getAnalytics,
+  clearChatLogs,
 };
