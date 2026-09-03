@@ -168,7 +168,11 @@ const getRasaStatus = async (req, res) => {
   if (RASA_SERVER_URL) {
     try {
       const axios = require('axios');
-      const r = await axios.get(`${RASA_SERVER_URL}/`, { timeout: 3000 });
+      // Same cold-start reasoning as handleMessage — a short timeout here
+      // means this status check itself would report "offline" for a Rasa
+      // instance that's merely waking up, which is misleading for staff
+      // trying to diagnose whether Rasa is actually configured correctly.
+      const r = await axios.get(`${RASA_SERVER_URL}/`, { timeout: 20000 });
       rasaOnline = true;
       rasaVersion = r.data?.version || r.data?.rasa_version || null;
     } catch (_) {
@@ -218,7 +222,7 @@ const testChatbot = async (req, res) => {
     try {
       const r = await axios.post(`${RASA_SERVER_URL}/webhooks/rest/webhook`, {
         sender: 'admin-test', message: message.trim(),
-      }, { timeout: 5000 });
+      }, { timeout: 20000 });
       const msgs = r.data;
       if (Array.isArray(msgs) && msgs.length > 0) {
         response = msgs.map(m => m.text).filter(Boolean).join('\n');

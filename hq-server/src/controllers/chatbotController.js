@@ -140,17 +140,29 @@ const handleMessage = async (req, res) => {
     // 1. Tier 1: RASA AI Server
     if (RASA_SERVER_URL) {
       try {
+        // Free-tier hosting (Render/Railway/Fly free plans, etc.) commonly
+        // spins the service down when idle and takes 20-50+ seconds to
+        // cold-start on the next request. The previous 4s timeout meant a
+        // cold Rasa instance would ALWAYS time out here, silently falling
+        // through to OpenAI/FAQ every time — Rasa effectively never got
+        // used in practice unless it happened to already be warm.
         const rasaRes = await axios.post(`${RASA_SERVER_URL}/webhooks/rest/webhook`, {
           sender: patientId || req.user?._id || 'anonymous',
           message: message.trim(),
-        }, { timeout: 4000 });
+        }, { timeout: 20000 });
 
         if (Array.isArray(rasaRes.data) && rasaRes.data.length > 0) {
           reply = rasaRes.data.map((m) => m.text).filter(Boolean).join('\n');
           source = 'rasa';
         }
       } catch (err) {
-        console.warn('[Chatbot] RASA unavailable, shifting to OpenAI/FAQ fallback.');
+        // Log the actual failure reason (timeout vs connection-refused vs
+        // bad response) instead of a generic warning — otherwise there's
+        // no way to tell from the logs whether Rasa is misconfigured,
+        // down, or just slow to wake up.
+        console.warn(
+          `[Chatbot] RASA unavailable (${err.code || err.message}), shifting to OpenAI/FAQ fallback.`
+        );
       }
     }
 

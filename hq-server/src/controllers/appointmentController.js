@@ -403,19 +403,34 @@ const getAppointment = async (req, res) => {
 
 const updateStatus = async (req, res) => {
   try {
-    // A cancelled appointment must stay cancelled — staff should not be
-    // able to "revive" or otherwise modify it once the patient (or staff)
-    // has cancelled it. This used to blindly overwrite whatever status was
-    // sent with no check at all, so a cancelled appointment could silently
-    // be turned back into confirmed/completed/etc. via this same endpoint.
+    // Full state-machine enforcement — the client (appointment_management_
+    // screen.dart's _validNextStatuses) only offers valid transitions in
+    // its UI, but that alone isn't enforcement; a direct API call could
+    // still skip straight from e.g. 'pending' to 'completed', or "revive"
+    // a terminal appointment. This mirrors the same rules the UI offers.
+    const VALID_TRANSITIONS = {
+      pending:   ['confirmed', 'cancelled'],
+      confirmed: ['arrived', 'cancelled', 'no_show'],
+      arrived:   ['serving', 'cancelled', 'no_show'],
+      serving:   ['completed'],
+      completed: [],
+      cancelled: [],
+      no_show:   [],
+    };
+
     const existing = await Appointment.findById(req.params.id).select('status');
     if (!existing) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Appointment not found.' });
     }
-    if (existing.status === 'cancelled') {
+
+    const allowed = VALID_TRANSITIONS[existing.status] || [];
+    if (!allowed.includes(req.body.status)) {
+      const isTerminal = allowed.length === 0;
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
-        message: 'This appointment was cancelled and cannot be modified.',
+        message: isTerminal
+          ? `This appointment is ${existing.status} and cannot be modified.`
+          : `Cannot move an appointment from "${existing.status}" to "${req.body.status}".`,
       });
     }
 

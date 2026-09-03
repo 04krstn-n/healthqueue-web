@@ -85,7 +85,7 @@ const createUser = async (req, res) => {
         {
           fullName: fullName.trim(),
           email: normalizedEmail,
-          phone: phone || '',
+          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
           password,
           role,
           clinicId: targetClinic,

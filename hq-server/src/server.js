@@ -59,6 +59,13 @@ io.on('connection', (socket) => {
     socket.join(`clinic_${clinicId}`);
   });
 
+  // Per-patient room — patients aren't tied to one clinic (they can join
+  // any clinic's queue), so account-level pushes like a patient-type
+  // request being approved need a room keyed by the user, not a clinic.
+  socket.on('join_user', (userId) => {
+    socket.join(`user_${userId}`);
+  });
+
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
   });

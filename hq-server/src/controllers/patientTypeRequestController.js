@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const PatientTypeRequest = require('../models/PatientTypeRequest');
 const Patient = require('../models/Patient');
+const QueueEntry = require('../models/QueueEntry');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
 const { uploadDir } = require('../middleware/upload');
@@ -140,6 +141,19 @@ const approveRequest = async (req, res) => {
       { patientType: request.requestedType }
     );
 
+    // If the patient is currently waiting/called in a queue right now,
+    // update that entry's priority too — otherwise their account would
+    // show "Priority" immediately, but their existing spot in an
+    // already-joined queue would silently stay Regular until they left
+    // and rejoined. This was the actual "not moved to Priority without a
+    // manual refresh" gap: even after this fix's real-time push updates
+    // the account, an in-progress queue entry needed its own update.
+    const activeEntry = await QueueEntry.findOneAndUpdate(
+      { patient: request.patient, status: { $in: ['waiting', 'called'] } },
+      { queueType: 'Priority', priority: true },
+      { new: true }
+    );
+
     request.status = 'approved';
     request.reviewedBy = req.user._id;
     request.reviewedAt = new Date();
@@ -154,6 +168,28 @@ const approveRequest = async (req, res) => {
       targetLabel: `Approved ${request.requestedType} for patient`,
       details: { requestedType: request.requestedType },
     });
+
+    // Real-time push so the patient's account updates immediately without
+    // needing to log out/in or otherwise refresh — see server.js's
+    // 'join_user' room (patients aren't clinic-scoped, so this can't reuse
+    // the clinic room broadcasts queue events already use).
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user_${request.patient}`).emit('patient_type_updated', {
+        patientType: request.requestedType,
+        status: 'approved',
+      });
+      // Also nudge the clinic's queue view (staff tablet + any other
+      // patients watching that clinic) so the Priority tag appears on the
+      // active entry right away, reusing the same event queue screens
+      // already listen for.
+      if (activeEntry) {
+        io.to(`clinic_${activeEntry.clinic}`).emit('global_queue_change', {
+          clinicId: activeEntry.clinic,
+          eventName: 'patient_type_updated',
+        });
+      }
+    }
 
     return res.status(HttpStatus.OK).json({ success: true, data: request });
   } catch (err) {
