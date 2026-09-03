@@ -17,6 +17,23 @@ const { sendOTP } = require('../services/smsService');
  */
 const generateOTPCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+// Normalizes a PH mobile number to a single canonical form (09XXXXXXXXX)
+// before it's ever stored or queried. The mobile app's register/forgot-
+// password screens both accept either 09XXXXXXXXX or +639XXXXXXXXX as
+// valid input (same regex, either format passes), but nothing anywhere
+// normalized them to one form — so a patient who registered as
+// "09171234567" and later typed "+639171234567" at login would get a
+// silent "account not found" from an exact-match query, even with the
+// correct password. This is applied consistently everywhere a phone
+// number is stored or looked up (register, login, forgot-password).
+const normalizePhone = (phone) => {
+  if (!phone) return phone;
+  const digits = phone.toString().trim().replace(/[^\d]/g, '');
+  if (digits.startsWith('63') && digits.length === 12) return `0${digits.slice(2)}`;
+  if (digits.startsWith('9') && digits.length === 10) return `0${digits}`;
+  return digits;
+};
+
 // The exact wording the mobile app relies on to recognize a phone-duplicate
 // rejection (see register_screen.dart) — do not reword without updating
 // that check too.
@@ -47,7 +64,7 @@ const register = async (req, res) => {
       });
     }
 
-    const cleanPhone = phone.trim();
+    const cleanPhone = normalizePhone(phone);
     const cleanEmail = email && email.trim() ? email.toLowerCase().trim() : null;
 
     // Backend/database-level duplicate prevention — this check plus the
@@ -328,7 +345,7 @@ const login = async (req, res) => {
     const looksLikeEmail = raw.includes('@');
     const query = looksLikeEmail
       ? { email: raw.toLowerCase() }
-      : { phone: raw };
+      : { phone: normalizePhone(raw) };
 
     const user = await User.findOne(query).select('+password');
     if (!user) {
@@ -437,7 +454,7 @@ const forgotPassword = async (req, res) => {
         message: 'Phone number is required.',
       });
     }
-    const cleanPhone = phone.trim();
+    const cleanPhone = normalizePhone(phone);
 
     const user = await User.findOne({ phone: cleanPhone });
     if (!user) {
