@@ -56,31 +56,10 @@ const getQueueEntries = async (req, res) => {
       .populate('patient', 'fullName phone patientType')
       .sort({ joinedAt: 1 });
 
-    // Recompute each active entry's estimated wait time live rather than
-    // trusting the value stored at join time — that snapshot never changed
-    // again, so a service duration update (Waiting Time Update screen) was
-    // invisible to staff for anyone already in the queue, even though it
-    // now correctly affects new joiners (see estimateWaitTime). Only one
-    // estimateWaitTime() call per distinct clinic+service combination in
-    // this batch, not one per entry.
-    const cache = new Map();
-    const results = await Promise.all(entries.map(async (entry) => {
-      const obj = entry.toObject();
-      if (['waiting', 'serving'].includes(entry.status)) {
-        const cid = entry.clinic?._id?.toString() || entry.clinic?.toString();
-        const key = `${cid}:${entry.serviceId || ''}`;
-        if (!cache.has(key)) {
-          cache.set(key, estimateWaitTime(cid, entry.serviceId));
-        }
-        obj.estimatedWaitMinutes = await cache.get(key);
-      }
-      return obj;
-    }));
-
     return res.status(HttpStatus.OK).json({
       success: true,
-      count: results.length,
-      data: results,
+      count: entries.length,
+      data: entries,
     });
   } catch (err) {
     console.error('getQueueEntries Error:', err.message);
@@ -94,7 +73,7 @@ const getQueueEntries = async (req, res) => {
 // POST /api/queues/join — Patient remote queue enrollment with en-route tracking
 const joinQueue = async (req, res) => {
   try {
-    let { clinicId, serviceName, serviceId, notes, joinedRemotely } = req.body;
+    let { clinicId, serviceName, serviceId, notes, priority, joinedRemotely } = req.body;
 
     if (!clinicId) {
       return res.status(HttpStatus.BAD_REQUEST).json({ 
@@ -172,20 +151,12 @@ const joinQueue = async (req, res) => {
 
     const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
     const queueNumber = await getNextQueueNumber(clinicId, prefix);
-    const estWait = await estimateWaitTime(clinicId, serviceId);
+    const estWait = await estimateWaitTime(clinicId);
     const activeCount = await QueueEntry.countDocuments({
       clinic: clinicId,
       status: { $in: ['waiting', 'serving', 'called'] },
       joinedAt: todayRange(),
     });
-
-    // Priority is derived ONLY from the patient's own stored record
-    // (patient.patientType), which can only be changed by staff/admin via
-    // PUT /api/patients/:id (see patientController.updatePatient) — this
-    // used to also accept a `priority` boolean straight from the request
-    // body, which let any patient grant themselves priority queue
-    // placement just by adding a field to the join request.
-    const isPriorityPatient = Boolean(patient.patientType && patient.patientType !== 'Regular');
 
     const entry = await QueueEntry.create({
       clinic: clinicId,
@@ -196,8 +167,8 @@ const joinQueue = async (req, res) => {
       serviceName,
       serviceId: serviceId || null,
       queueNumber,
-      queueType: isPriorityPatient ? 'Priority' : 'Regular',
-      priority: isPriorityPatient,
+      queueType: (priority || patient.patientType !== 'Regular') ? 'Priority' : 'Regular',
+      priority: priority || false,
       joinedRemotely: joinedRemotely !== undefined ? joinedRemotely : true,
       notes: notes || '',
       estimatedWaitMinutes: estWait,
@@ -270,7 +241,7 @@ const getMyQueueStatus = async (req, res) => {
       _id: { $lt: entry._id },
     });
 
-    const estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId);
+    const estWait = await estimateWaitTime(entry.clinic._id);
 
     return res.status(HttpStatus.OK).json({
       success: true,
@@ -302,22 +273,6 @@ const getMyQueueStatus = async (req, res) => {
 // PUT /api/queues/:id/call — Calls patient & starts 5-minute arrival grace period
 const callPatient = async (req, res) => {
   try {
-    // Waiting -> Called is the only valid path into `called`. Without this
-    // guard, `called` (or `serving`) could be re-called, silently resetting
-    // the 5-minute grace period / re-notifying the patient for a ticket
-    // that's already past that stage — and the UI must not be the only
-    // thing preventing it (a direct API call would otherwise still work).
-    const existing = await QueueEntry.findById(req.params.id).select('status');
-    if (!existing) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
-    }
-    if (existing.status !== 'waiting') {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: `Cannot call a patient with status "${existing.status}". Only a waiting entry can be called.`,
-      });
-    }
-
     const graceExpiry = getGracePeriodExpiry(5); // 5-minute arrival grace window
 
     const entry = await QueueEntry.findByIdAndUpdate(
@@ -386,23 +341,6 @@ const callPatient = async (req, res) => {
 // PUT /api/queues/:id/start-service — Marks patient as in-consultation
 const startService = async (req, res) => {
   try {
-    // Called -> Serving is the only valid path. This is also what makes
-    // "From Serving, staff must NOT be able to change it back to Called"
-    // hold: since callPatient itself now requires status === 'waiting',
-    // there's no path back into `called` from `serving` at all — and this
-    // guard ensures start-service can't be used to jump straight from
-    // `waiting` (skipping the call/grace-period step) either.
-    const existing = await QueueEntry.findById(req.params.id).select('status');
-    if (!existing) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
-    }
-    if (existing.status !== 'called') {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: `Cannot start service for status "${existing.status}". The patient must be called first.`,
-      });
-    }
-
     const entry = await QueueEntry.findByIdAndUpdate(
       req.params.id,
       { 
@@ -430,15 +368,6 @@ const completePatient = async (req, res) => {
     const entry = await QueueEntry.findById(req.params.id);
     if (!entry) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
-    }
-
-    // Serving -> Completed is the only valid path — matches the existing
-    // workflow (a session can't be "completed" before it started).
-    if (entry.status !== 'serving') {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: `Cannot complete an entry with status "${entry.status}". Service must be in progress first.`,
-      });
     }
 
     entry.status = 'completed';
@@ -507,20 +436,6 @@ const skipPatient = async (req, res) => {
 // PUT /api/queues/:id/no-show — Marks patient as no-show
 const markNoShow = async (req, res) => {
   try {
-    // Called -> No Show is the only valid path — a patient can only be
-    // marked no-show after being called and failing to arrive within the
-    // grace period, not from waiting or serving.
-    const existing = await QueueEntry.findById(req.params.id).select('status');
-    if (!existing) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
-    }
-    if (existing.status !== 'called') {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: `Cannot mark no-show for status "${existing.status}". The patient must be called first.`,
-      });
-    }
-
     const entry = await QueueEntry.findByIdAndUpdate(
       req.params.id, 
       { status: 'no_show' }, 
@@ -588,12 +503,7 @@ const requeueEntry = async (req, res) => {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
 
-    // 'called' intentionally excluded — once a patient has been called,
-    // staff must not be able to move them back to "waiting" (see the
-    // matching guard in callPatient: calling requires status === 'waiting',
-    // so this is the only door back into the queue for a called entry
-    // being closed). skipped/no_show can still be requeued.
-    const requeueable = ['skipped', 'no_show'];
+    const requeueable = ['called', 'skipped', 'no_show'];
     if (!requeueable.includes(entry.status)) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
@@ -615,42 +525,6 @@ const requeueEntry = async (req, res) => {
     return res.status(HttpStatus.OK).json({ success: true, message: 'Patient returned to waiting.', entry });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to requeue entry.' });
-  }
-};
-
-// PUT /api/queues/:id/on-the-way — Patient acknowledges being called and
-// heading to the clinic. Does NOT change queue status (only staff, via
-// start-service, can move called -> serving — see the guard there) — this
-// is purely an informational nudge so staff know a patient is en route
-// before they physically arrive, instead of finding out only once the
-// patient shows up at the counter.
-const markOnTheWay = async (req, res) => {
-  try {
-    const entry = await QueueEntry.findById(req.params.id);
-    if (!entry) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
-    }
-    if (entry.patient?.toString() !== req.user._id.toString()) {
-      return res.status(HttpStatus.FORBIDDEN).json({
-        success: false,
-        message: 'Not authorized for this queue entry.',
-      });
-    }
-    if (entry.status !== 'called') {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: `Cannot acknowledge — entry status is "${entry.status}", not "called".`,
-      });
-    }
-
-    emitQueueUpdate(req, entry.clinic, 'patient_on_the_way', {
-      entryId: entry._id,
-      queueNumber: entry.queueNumber,
-    });
-
-    return res.status(HttpStatus.OK).json({ success: true, message: 'Staff notified.' });
-  } catch (err) {
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to notify staff.' });
   }
 };
 
@@ -732,7 +606,7 @@ const addWalkIn = async (req, res) => {
 
     const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
     const queueNumber = await getNextQueueNumber(cId, prefix);
-    const estWait = await estimateWaitTime(cId, serviceId);
+    const estWait = await estimateWaitTime(cId);
     const activeCount = await QueueEntry.countDocuments({
       clinic: cId,
       status: { $in: ['waiting', 'serving', 'called'] },
@@ -784,5 +658,4 @@ module.exports = {
   requeueEntry,
   getQueueMetrics,
   addWalkIn,
-  markOnTheWay,
 };

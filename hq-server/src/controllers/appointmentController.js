@@ -181,15 +181,6 @@ const updateAppointment = async (req, res) => {
       });
     }
 
-    // Same rule as updateStatus — a cancelled appointment can't be
-    // rescheduled/edited either, by staff or the patient.
-    if (appt.status === 'cancelled') {
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: 'This appointment was cancelled and cannot be modified.',
-      });
-    }
-
     if (appointmentDate) appt.appointmentDate = new Date(appointmentDate);
     if (timeSlot) appt.timeSlot = timeSlot;
     if (notes) appt.notes = notes;
@@ -250,7 +241,7 @@ const cancelMyAppointment = async (req, res) => {
 // GET /api/appointments — Staff/Admin fetches appointments
 const getAppointments = async (req, res) => {
   try {
-    const { clinicId, status, date, dateFrom, dateTo } = req.query;
+    const { clinicId, status, date } = req.query;
     const filter = {};
 
     if (req.user.role === 'facility_admin' && req.user.clinicId) {
@@ -260,23 +251,7 @@ const getAppointments = async (req, res) => {
     }
 
     if (status) filter.status = status;
-
-    // dateFrom/dateTo let callers request a multi-day window (e.g. staff
-    // reviewing today + the next few days to confirm upcoming appointments)
-    // instead of only ever fetching one day at a time. `date` (single day)
-    // is kept working as before for existing callers.
-    if (dateFrom || dateTo) {
-      const range = {};
-      if (dateFrom) {
-        const from = new Date(dateFrom); from.setHours(0, 0, 0, 0);
-        range.$gte = from;
-      }
-      if (dateTo) {
-        const to = new Date(dateTo); to.setHours(23, 59, 59, 999);
-        range.$lte = to;
-      }
-      filter.appointmentDate = range;
-    } else if (date) {
+    if (date) {
       const d = new Date(date);
       const start = new Date(d); start.setHours(0, 0, 0, 0);
       const end   = new Date(d); end.setHours(23, 59, 59, 999);
@@ -403,37 +378,6 @@ const getAppointment = async (req, res) => {
 
 const updateStatus = async (req, res) => {
   try {
-    // Full state-machine enforcement — the client (appointment_management_
-    // screen.dart's _validNextStatuses) only offers valid transitions in
-    // its UI, but that alone isn't enforcement; a direct API call could
-    // still skip straight from e.g. 'pending' to 'completed', or "revive"
-    // a terminal appointment. This mirrors the same rules the UI offers.
-    const VALID_TRANSITIONS = {
-      pending:   ['confirmed', 'cancelled'],
-      confirmed: ['arrived', 'cancelled', 'no_show'],
-      arrived:   ['serving', 'cancelled', 'no_show'],
-      serving:   ['completed'],
-      completed: [],
-      cancelled: [],
-      no_show:   [],
-    };
-
-    const existing = await Appointment.findById(req.params.id).select('status');
-    if (!existing) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Appointment not found.' });
-    }
-
-    const allowed = VALID_TRANSITIONS[existing.status] || [];
-    if (!allowed.includes(req.body.status)) {
-      const isTerminal = allowed.length === 0;
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: isTerminal
-          ? `This appointment is ${existing.status} and cannot be modified.`
-          : `Cannot move an appointment from "${existing.status}" to "${req.body.status}".`,
-      });
-    }
-
     const appt = await Appointment.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
 
     if (appt) {

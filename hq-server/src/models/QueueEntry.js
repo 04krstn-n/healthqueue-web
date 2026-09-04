@@ -48,7 +48,6 @@ const QueueEntrySchema = new mongoose.Schema(
       enum: ['waiting', 'serving', 'called', 'completed', 'skipped', 'no_show', 'cancelled', 'done'],
       default: 'waiting',
       index: true,
-      set: (v) => (typeof v === 'string' ? v.toLowerCase() : v),
     },
 
     // ─── En-Route Queueing & Grace Period (Capstone Requirement) ─────────────

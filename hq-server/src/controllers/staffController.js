@@ -110,7 +110,7 @@ const createStaff = async (req, res) => {
         {
           fullName: fullName.trim(),
           email: normalizedEmail,
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
+          phone: phone || '',
           password: password || 'Staff@123',
           role: 'staff',
           clinicId: targetClinic,
@@ -129,7 +129,7 @@ const createStaff = async (req, res) => {
           clinic: targetClinic,
           fullName: fullName.trim(),
           email: normalizedEmail,
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
+          phone: phone || '',
           role: role || 'admin',
           specialization: specialization || '',
           licenseNumber: licenseNumber || '',

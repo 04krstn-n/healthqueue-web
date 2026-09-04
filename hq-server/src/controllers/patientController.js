@@ -55,7 +55,7 @@ const createPatient = async (req, res) => {
         const userDoc = await User.create({
           fullName: fullName.trim(),
           email: email.toLowerCase().trim(),
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
+          phone: phone || '',
           password: 'Patient@123',
           role: 'patient',
           isVerified: true,
@@ -68,7 +68,7 @@ const createPatient = async (req, res) => {
       user: userId,
       fullName: fullName.trim(),
       email: email || '',
-      phone: phone || '', // Patient.phone has no unique constraint — '' is fine here
+      phone: phone || '',
       dateOfBirth: dateOfBirth || null,
       gender: gender || 'Other',
       address: address || '',

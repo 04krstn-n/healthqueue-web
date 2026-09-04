@@ -26,7 +26,6 @@ const getServices = async (req, res) => {
 
     return res.json({ clinicId: clinic._id, clinicName: clinic.name, services: clinic.services });
   } catch (err) {
-    console.error('getServices Error:', err.message);
     return res.status(500).json({ message: 'Failed to fetch services.' });
   }
 };
@@ -83,7 +82,6 @@ const addService = async (req, res) => {
 
     return res.status(201).json(addedService);
   } catch (err) {
-    console.error('addService Error:', err.message);
     return res.status(500).json({ message: 'Failed to add service.' });
   }
 };
@@ -97,71 +95,31 @@ const updateService = async (req, res) => {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
-    const allowed = ['name', 'description', 'durationMinutes', 'isAvailable'];
-    const setOps = {};
-    allowed.forEach((f) => {
-      if (req.body[f] !== undefined) setOps[`services.$[svc].${f}`] = req.body[f];
-    });
-
-    if (Object.keys(setOps).length === 0) {
-      return res.status(400).json({ message: 'No valid fields to update.' });
-    }
-
-    // Previously this loaded the whole clinic, mutated the one service
-    // subdocument in memory, then called clinic.save() — but .save()
-    // re-validates the ENTIRE document, including every other service
-    // already on that clinic. One unrelated service with bad/legacy data
-    // (e.g. a blank name from an old import) would then make every future
-    // edit to any OTHER service on that clinic fail with this same generic
-    // message, with nothing in the server logs to explain why.
-    // findOneAndUpdate + arrayFilters (the same atomic pattern addService
-    // already uses for $push) only touches and validates the targeted
-    // service, so sibling data can no longer block this update.
-    const clinic = await Clinic.findOneAndUpdate(
-      { _id: clinicId, 'services._id': serviceId },
-      { $set: setOps },
-      { new: true, runValidators: true, arrayFilters: [{ 'svc._id': serviceId }] }
-    );
-
-    if (!clinic) {
-      const exists = await Clinic.findById(clinicId).select('_id');
-      if (!exists) return res.status(404).json({ message: 'Clinic not found.' });
-      return res.status(404).json({ message: 'Service not found.' });
-    }
+    const clinic = await Clinic.findById(clinicId);
+    if (!clinic) return res.status(404).json({ message: 'Clinic not found.' });
 
     const svc = clinic.services.id(serviceId);
+    if (!svc) return res.status(404).json({ message: 'Service not found.' });
+
+    const allowed = ['name', 'description', 'durationMinutes', 'isAvailable'];
+    allowed.forEach((f) => {
+      if (req.body[f] !== undefined) svc[f] = req.body[f];
+    });
+
+    await clinic.save();
 
     await logAction({
       actor: req.user,
       action: 'update',
       targetType: 'Service',
-      targetId: serviceId,
-      targetLabel: svc?.name || '',
+      targetId: svc._id,
+      targetLabel: svc.name,
       clinicId,
       details: req.body,
     });
 
-    // Broadcast so already-open staff tablets and patient apps refresh
-    // immediately instead of only picking this up on their next poll —
-    // reuses the existing `global_queue_change` event both clients already
-    // listen for (see ClinicSocketService / QueueSocketService), so no
-    // client-side socket changes were needed for this to take effect.
-    const io = req.app.get('io');
-    if (io && setOps['services.$[svc].durationMinutes'] !== undefined) {
-      io.to(`clinic_${clinicId}`).emit('global_queue_change', {
-        clinicId,
-        eventName: 'service_duration_updated',
-        serviceId,
-        durationMinutes: setOps['services.$[svc].durationMinutes'],
-      });
-    }
-
     return res.json(svc);
   } catch (err) {
-    console.error('updateService Error:', err.message);
-    if (err.name === 'ValidationError') {
-      return res.status(400).json({ message: err.message });
-    }
     return res.status(500).json({ message: 'Failed to update service.' });
   }
 };
@@ -200,7 +158,6 @@ const deleteService = async (req, res) => {
 
     return res.json({ message: 'Service removed.' });
   } catch (err) {
-    console.error('deleteService Error:', err.message);
     return res.status(500).json({ message: 'Failed to delete service.' });
   }
 };

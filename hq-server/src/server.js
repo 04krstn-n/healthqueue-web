@@ -30,7 +30,6 @@ const chatbotAdminRoutes = require('./routes/chatbotAdminRoutes');
 const systemConfigRoutes = require('./routes/systemConfigRoutes');
 const analyticsRoutes    = require('./routes/analyticsRoutes');
 const prescriptiveRoutes = require('./routes/prescriptiveRoutes');
-const patientTypeRequestRoutes = require('./routes/patientTypeRequestRoutes');
 const auditLogRoutes     = require('./routes/auditLogRoutes');
 
 // ─── Connect Database ─────────────────────────────────────────────────────────
@@ -57,13 +56,6 @@ io.on('connection', (socket) => {
   // Room subscriptions for targeted broadcasts (e.g., specific clinic queue updates)
   socket.on('join_clinic', (clinicId) => {
     socket.join(`clinic_${clinicId}`);
-  });
-
-  // Per-patient room — patients aren't tied to one clinic (they can join
-  // any clinic's queue), so account-level pushes like a patient-type
-  // request being approved need a room keyed by the user, not a clinic.
-  socket.on('join_user', (userId) => {
-    socket.join(`user_${userId}`);
   });
 
   socket.on('disconnect', () => {
@@ -125,7 +117,6 @@ app.use('/api/system-config',        systemConfigRoutes);
 app.use('/api/analytics',     analyticsRoutes);
 app.use('/api/prescriptive',  prescriptiveRoutes);
 app.use('/api/audit-logs',    auditLogRoutes);
-app.use('/api/patient-type-requests', patientTypeRequestRoutes);
 
 // ─── Error Handlers ───────────────────────────────────────────────────────────
 app.use(notFound);

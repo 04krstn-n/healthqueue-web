@@ -22,34 +22,18 @@ const getNextQueueNumber = async (clinicId, prefix = 'Q') => {
 };
 
 /**
- * Estimate wait time in minutes based on active queue + per-person duration.
- *
- * When `serviceId` is given, the estimate uses THAT service's own
- * `durationMinutes` (set via the Waiting Time Update screen /
- * PUT /api/services/:clinicId/:serviceId) instead of the clinic's generic
- * `baseWaitTimePerPerson`. Previously this function only ever read
- * baseWaitTimePerPerson — meaning updating a service's duration had NO
- * effect on anyone's displayed wait time anywhere in the app, staff or
- * patient side, since nothing ever consulted that field. Falls back to
- * baseWaitTimePerPerson when no serviceId is given or the service can't be
- * found, so existing callers that don't pass one keep working exactly as
- * before.
+ * Estimate wait time in minutes based on active queue + base wait time per person.
  */
-const estimateWaitTime = async (clinicId, serviceId = null) => {
-  const clinic = await Clinic.findById(clinicId).select('baseWaitTimePerPerson services');
-  let perPerson = clinic?.baseWaitTimePerPerson || 10;
-
-  if (serviceId && clinic?.services?.length) {
-    const svc = clinic.services.id(serviceId);
-    if (svc?.durationMinutes) perPerson = svc.durationMinutes;
-  }
+const estimateWaitTime = async (clinicId) => {
+  const clinic = await Clinic.findById(clinicId).select('baseWaitTimePerPerson');
+  const base = clinic?.baseWaitTimePerPerson || 10;
 
   const active = await QueueEntry.countDocuments({
     clinic: clinicId,
     status: { $in: ['waiting', 'serving'] },
   });
 
-  return active * perPerson;
+  return active * base;
 };
 
 /**
