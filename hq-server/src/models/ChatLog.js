@@ -8,6 +8,13 @@ const ChatLogSchema = new mongoose.Schema(
   {
     patient:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     senderId:    { type: String, default: 'anonymous' },
+    // Who authored THIS entry's `message`/`reply` pair. 'patient' (default)
+    // is the normal case: patient sent `message`, bot answered in `reply`.
+    // 'staff' is a live thread reply: `message` is empty and `reply` holds
+    // the staff member's own text — reuses the same message/reply shape so
+    // getMyChatHistory (patient side) and the existing staff log views
+    // render it with no changes.
+    sender:      { type: String, enum: ['patient', 'staff'], default: 'patient' },
     message:     { type: String, required: true, trim: true },
     
     // The chatbot's reply

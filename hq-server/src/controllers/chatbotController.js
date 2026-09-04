@@ -6,6 +6,7 @@ const axios = require('axios');
 const OpenAI = require('openai');
 const FAQ = require('../models/FAQ');
 const ChatLog = require('../models/ChatLog');
+const ChatSession = require('../models/ChatSession');
 const QueueEntry = require('../models/QueueEntry');
 const Appointment = require('../models/Appointment');
 const { HttpStatus, OPENAI_API_KEY, RASA_SERVER_URL } = require('../config/config');
@@ -61,6 +62,35 @@ function emitEscalation(req, clinicId, payload) {
   // super_admin dashboards aren't scoped to a single clinic room, so they
   // still get a global heads-up alongside the clinic-scoped one.
   io.emit('global_chat_escalated', { ...payload, clinicId });
+}
+
+/**
+ * Puts a patient's ChatSession into 'staff' mode — from this point,
+ * handleMessage() stops running the bot for their messages and just
+ * relays them (see the handoff check near the top of handleMessage).
+ */
+async function openStaffSession(patientId, clinicId, chatLogId) {
+  if (!patientId) return;
+  await ChatSession.findOneAndUpdate(
+    { patient: patientId },
+    {
+      patient: patientId,
+      clinicId: clinicId || null,
+      mode: 'staff',
+      activeChatLogId: chatLogId || null,
+      lastActivityAt: new Date(),
+    },
+    { upsert: true, new: true }
+  );
+}
+
+/** Hands the conversation back to the bot once staff resolve it. */
+async function closeStaffSession(patientId) {
+  if (!patientId) return;
+  await ChatSession.findOneAndUpdate(
+    { patient: patientId },
+    { mode: 'bot', assignedStaff: null, activeChatLogId: null, lastActivityAt: new Date() }
+  );
 }
 
 // ── FAQ Keyword Match Fallback ───────────────────────────────────────────────
@@ -137,6 +167,62 @@ const handleMessage = async (req, res) => {
     let source = 'faq';
     let autoEscalate = false;
 
+    // Resolved up front (not just before logging) so it can also be handed
+    // to Rasa as context — this is what lets a Rasa custom action recommend
+    // a clinic-specific queue/appointment without the patient having to
+    // repeat which clinic they mean.
+    const resolvedClinicId =
+      clinicId || req.user?.clinicId || (await resolvePatientClinicId(req.user?._id || patientId));
+
+    // ── Staff handoff check ──────────────────────────────────────────────
+    // If this patient's conversation has been escalated and a ChatSession
+    // is in 'staff' mode, don't run the bot at all — just log the message
+    // and relay it to staff. Without this, an escalated patient who sends
+    // a follow-up message would get a fresh auto-generated bot reply
+    // talking over whatever staff is doing, which is exactly what "talk to
+    // a human" was supposed to stop.
+    const activePatientId = req.user?._id || patientId;
+    const session = activePatientId
+      ? await ChatSession.findOne({ patient: activePatientId })
+      : null;
+
+    if (session && session.mode === 'staff') {
+      const log = await ChatLog.create({
+        patient: activePatientId,
+        senderId: activePatientId.toString(),
+        sender: 'patient',
+        message: message.trim(),
+        reply: '',
+        source: 'staff',
+        isEscalated: true,
+        escalatedAt: session.updatedAt,
+        clinicId: session.clinicId || resolvedClinicId || null,
+      });
+      session.lastActivityAt = new Date();
+      await session.save();
+
+      const io = req.app.get('io');
+      if (io && session.clinicId) {
+        io.to(`clinic_${session.clinicId}`).emit('chat_thread_message', {
+          patientId: activePatientId,
+          logId: log._id,
+          message: log.message,
+        });
+      }
+
+      // No bot-generated `response` — the mobile client shows a "waiting
+      // for staff" state instead of an empty/fake bot bubble (see
+      // chatbot_screen.dart's handling of `awaitingStaff`).
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        response: null,
+        awaitingStaff: true,
+        source: 'staff',
+        isEscalated: true,
+        logId: log._id,
+      });
+    }
+
     // 1. Tier 1: RASA AI Server
     if (RASA_SERVER_URL) {
       try {
@@ -149,6 +235,18 @@ const handleMessage = async (req, res) => {
         const rasaRes = await axios.post(`${RASA_SERVER_URL}/webhooks/rest/webhook`, {
           sender: patientId || req.user?._id || 'anonymous',
           message: message.trim(),
+          // Rasa's custom actions need to call hq-server back AS this
+          // patient (to join a queue, book an appointment, escalate, etc.)
+          // rather than as some separate bot account. The simplest way to
+          // do that without inventing a new auth mechanism is to hand it
+          // the same bearer token this very request was authenticated
+          // with — it's already a valid, scoped JWT for this patient.
+          metadata: {
+            patient_token: req.headers.authorization?.split(' ')[1] || null,
+            patient_id: req.user?._id || patientId || null,
+            patient_name: req.user?.fullName || null,
+            clinic_id: resolvedClinicId || null,
+          },
         }, { timeout: 20000 });
 
         if (Array.isArray(rasaRes.data) && rasaRes.data.length > 0) {
@@ -194,13 +292,6 @@ const handleMessage = async (req, res) => {
       autoEscalate = true;
     }
 
-    // If the widget didn't tell us which clinic this is for, fall back to
-    // whichever clinic the patient has already selected (active queue entry
-    // or appointment) so the log — and any escalation — actually reaches
-    // that clinic's staff instead of sitting unassigned.
-    const resolvedClinicId =
-      clinicId || req.user?.clinicId || (await resolvePatientClinicId(req.user?._id || patientId));
-
     // Escalation is only allowed once the patient has actually selected a
     // clinic (via an active queue entry or appointment, or an explicit
     // clinicId) — escalating with no clinic attached means no one's queue
@@ -226,6 +317,7 @@ const handleMessage = async (req, res) => {
 
     if (willEscalate) {
       emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message });
+      await openStaffSession(activePatientId, resolvedClinicId, log._id);
     }
 
     return res.status(HttpStatus.OK).json({
@@ -304,6 +396,7 @@ const escalateToStaff = async (req, res) => {
     }
 
     emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message, note });
+    await openStaffSession(req.user?._id || existingLog?.patient, resolvedClinicId, log._id);
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Escalated to staff successfully.', log });
   } catch (err) {
@@ -334,6 +427,14 @@ const resolveEscalation = async (req, res) => {
     // it drops out of "Needs Attention" everywhere, not just this device.
     emitEscalation(req, log.clinicId, { logId: log._id, resolved: true });
 
+    // Hand the conversation back to the bot and tell the patient's app so
+    // it can drop the "waiting for staff" state and resume normal chat.
+    await closeStaffSession(log.patient);
+    const io = req.app.get('io');
+    if (io && log.patient) {
+      io.to(`user_${log.patient}`).emit('chat_thread_closed', { note: note || '' });
+    }
+
     await logAction({
       actor: req.user,
       action: 'resolve',
@@ -363,7 +464,7 @@ const getMyChatHistory = async (req, res) => {
     })
       .sort({ createdAt: 1 })
       .limit(200)
-      .select('message reply isEscalated resolvedByStaff createdAt');
+      .select('message reply sender source isEscalated resolvedByStaff createdAt');
 
     return res.status(HttpStatus.OK).json({ success: true, data: logs });
   } catch (err) {
@@ -375,4 +476,95 @@ const getMyChatHistory = async (req, res) => {
   }
 };
 
-module.exports = { handleMessage, escalateToStaff, resolveEscalation, getMyChatHistory };
+// GET /api/chatbot-admin/threads/:patientId/messages — Staff view of the
+// full back-and-forth for one patient (not just the single flagged
+// escalation message getEscalatedLogs returns), so staff have context
+// before replying.
+const getThreadMessages = async (req, res) => {
+  try {
+    const logs = await ChatLog.find({ patient: req.params.patientId })
+      .sort({ createdAt: 1 })
+      .limit(200)
+      .select('message reply sender source isEscalated resolvedByStaff createdAt');
+    return res.status(HttpStatus.OK).json({ success: true, data: logs });
+  } catch (err) {
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to load thread.' });
+  }
+};
+
+// POST /api/chatbot-admin/threads/:patientId/reply — Staff sends a live
+// reply into an ongoing (escalated) conversation WITHOUT closing it — the
+// only reply path that previously existed (resolveEscalation) always
+// closed the thread in the same call, so there was no way to have an
+// actual back-and-forth. This requires an active ChatSession (i.e. the
+// patient has actually been escalated) so staff can't message a patient
+// who hasn't asked for help.
+const replyToThread = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Reply text is required.' });
+    }
+
+    const session = await ChatSession.findOne({ patient: req.params.patientId });
+    if (!session || session.mode !== 'staff') {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'This patient does not have an active escalated conversation.',
+      });
+    }
+
+    const log = await ChatLog.create({
+      patient: req.params.patientId,
+      senderId: req.user._id.toString(),
+      sender: 'staff',
+      message: '',
+      reply: text.trim(),
+      response: text.trim(),
+      source: 'staff',
+      isEscalated: true,
+      escalatedAt: session.updatedAt,
+      escalatedToStaff: req.user._id,
+      clinicId: session.clinicId || null,
+    });
+
+    session.assignedStaff = req.user._id;
+    session.lastActivityAt = new Date();
+    await session.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      // Patient's own device — already joined `user_<id>` for other
+      // account-level pushes (see server.js `join_user`), so this reaches
+      // the chat screen live with no new client-side room to join.
+      io.to(`user_${req.params.patientId}`).emit('staff_chat_reply', {
+        text: log.reply,
+        staffName: req.user.fullName || 'Staff',
+        createdAt: log.createdAt,
+      });
+      // Other staff devices watching this same thread.
+      if (session.clinicId) {
+        io.to(`clinic_${session.clinicId}`).emit('chat_thread_message', {
+          patientId: req.params.patientId,
+          logId: log._id,
+          message: log.reply,
+          fromStaff: true,
+        });
+      }
+    }
+
+    return res.status(HttpStatus.OK).json({ success: true, log });
+  } catch (err) {
+    console.error('replyToThread Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to send reply.' });
+  }
+};
+
+module.exports = {
+  handleMessage,
+  escalateToStaff,
+  resolveEscalation,
+  getMyChatHistory,
+  getThreadMessages,
+  replyToThread,
+};
