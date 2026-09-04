@@ -140,9 +140,33 @@ const handleMessage = async (req, res) => {
     // 1. Tier 1: RASA AI Server
     if (RASA_SERVER_URL) {
       try {
+        // The actions.py side (action_session_start) reads
+        // tracker.latest_message.metadata to learn who's chatting, then
+        // uses metadata.patient_token to call hq-server back AS that
+        // patient for every authenticated action (join queue, book
+        // appointment, etc.) — see its own header comment. This request
+        // previously only ever sent {sender, message}, no metadata at
+        // all, so that slot was always empty and every authenticated
+        // action correctly (from Rasa's own perspective) refused with
+        // "I need to confirm your account first" — regardless of whether
+        // the patient was actually logged in, since Rasa was never told.
+        // req.headers.authorization is the exact same bearer token this
+        // request was itself just authenticated with by the `protect`
+        // middleware, so forwarding it lets Rasa's calls back to
+        // hq-server pass through the normal protect + patientOnly
+        // middleware exactly as if the patient's own app had called them.
+        const patientToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
+        const metaClinicId = clinicId || await resolvePatientClinicId(req.user?._id);
+
         const rasaRes = await axios.post(`${RASA_SERVER_URL}/webhooks/rest/webhook`, {
           sender: patientId || req.user?._id || 'anonymous',
           message: message.trim(),
+          metadata: {
+            patient_token: patientToken,
+            patient_id: req.user?._id ? String(req.user._id) : null,
+            patient_name: req.user?.fullName || null,
+            clinic_id: metaClinicId ? String(metaClinicId) : null,
+          },
         }, { timeout: 10000 }); // was 4000 — too tight for the current Rasa host under memory pressure; see /areas notes
 
         if (Array.isArray(rasaRes.data) && rasaRes.data.length > 0) {
