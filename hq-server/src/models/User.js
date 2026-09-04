@@ -14,13 +14,34 @@ const UserSchema = new mongoose.Schema(
     fullName: { type: String, required: true, trim: true },
     email: {
       type: String,
-      required: true,
+      required: false,
       unique: true,
+      sparse: true, // allows many documents to have no email at all —
+                     // without `sparse`, a plain unique index treats every
+                     // missing/null email as a duplicate of every other,
+                     // which would let only ONE emailless patient ever
+                     // register.
       lowercase: true,
       trim: true,
       index: true,
     },
-    phone:    { type: String, trim: true, default: '' },
+    // Not required at the schema level — staff/admin accounts and
+    // walk-in patient records created by staff don't always collect a
+    // phone number (see userController/staffController/patientController).
+    // Patient self-registration enforces "phone is required" itself, at
+    // the controller level (authController.register), since that
+    // requirement is specific to that flow, not every User document.
+    phone: {
+      type: String,
+      unique: true,
+      sparse: true, // lets multiple staff/admin/walk-in-patient records
+                     // omit phone without colliding with each other on
+                     // this index — as long as the field is truly
+                     // missing (undefined), not an empty string; see the
+                     // matching `|| undefined` fix in those controllers.
+      trim: true,
+      index: true,
+    },
     password: { type: String, required: true, select: false },
     role: {
       type: String,

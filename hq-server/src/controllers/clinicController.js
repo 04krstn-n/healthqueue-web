@@ -54,7 +54,12 @@ const createClinic = async (req, res) => {
     // Only auto-geocode when the admin didn't already provide real
     // coordinates (e.g. from a map-pin picker) — this just fills the gap
     // for the common case of typing an address and nothing else.
+    // NOTE: must check for undefined/null first — Number(undefined) is NaN,
+    // and NaN !== 0 is true, so without this check every clinic (where the
+    // form never sends latitude/longitude at all) was wrongly treated as
+    // "already has coordinates" and geocoding was skipped entirely.
     const hasExplicitCoords =
+      payload.latitude != null && payload.longitude != null &&
       Number(payload.latitude) !== 0 && Number(payload.longitude) !== 0;
 
     if (!hasExplicitCoords && (payload.address || payload.city)) {

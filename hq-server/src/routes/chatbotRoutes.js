@@ -5,6 +5,7 @@ const {
   handleMessage,
   escalateToStaff,
   resolveEscalation,
+  getMyChatHistory,
 } = require('../controllers/chatbotController');
 
 const {
@@ -19,6 +20,7 @@ router.use(protect);
 // ─── Patient Endpoints ────────────────────────────────────────────────────────
 router.post('/message', patientOnly, handleMessage);
 router.post('/escalate', patientOnly, escalateToStaff);
+router.get('/history', patientOnly, getMyChatHistory);
 
 // ─── Staff / Admin Endpoints ─────────────────────────────────────────────────
 router.put(

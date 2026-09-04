@@ -63,6 +63,7 @@ const AppointmentSchema = new mongoose.Schema(
       ],
       default: 'pending',
       index: true,
+      set: (v) => (typeof v === 'string' ? v.toLowerCase() : v),
     },
     reason: { type: String, default: '' },
     notes:  { type: String, default: '' },
