@@ -408,7 +408,7 @@ const login = async (req, res) => {
     let patientProfile = null;
     if (user.role === 'patient') {
       patientProfile = await Patient.findOne({ user: user._id })
-        .select('dateOfBirth gender age patientType philHealthNumber hmoProvider');
+        .select('dateOfBirth gender age patientType philHealthNumber hmoProvider address');
     }
 
     return res.status(HttpStatus.OK).json({
@@ -429,6 +429,7 @@ const login = async (req, res) => {
         patientType: patientProfile?.patientType || 'Regular',
         philHealthNumber: patientProfile?.philHealthNumber || '',
         hmoNumber: patientProfile?.hmoProvider || '',
+        address: patientProfile?.address || '',
       },
     });
   } catch (err) {
@@ -653,7 +654,7 @@ const getMe = async (req, res) => {
     let patientProfile = null;
     if (user.role === 'patient') {
       patientProfile = await Patient.findOne({ user: user._id })
-        .select('dateOfBirth gender age patientType philHealthNumber hmoProvider');
+        .select('dateOfBirth gender age patientType philHealthNumber hmoProvider address');
     }
 
     return res.status(HttpStatus.OK).json({
@@ -675,6 +676,7 @@ const getMe = async (req, res) => {
         patientType: patientProfile?.patientType || 'Regular',
         philHealthNumber: patientProfile?.philHealthNumber || '',
         hmoNumber: patientProfile?.hmoProvider || '',
+        address: patientProfile?.address || '',
       },
     });
   } catch (err) {

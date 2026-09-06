@@ -42,6 +42,14 @@ const UserSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+
+    // Firebase Cloud Messaging device token — set via PUT
+    // /users/me/fcm-token once the app registers for push after login.
+    // null/missing simply means this account has no push target yet
+    // (never logged in on a device with notifications set up, or
+    // Firebase isn't configured) — sendPushToUser() in services/
+    // pushService.js already treats that as a normal no-op, not an error.
+    fcmToken: { type: String, default: null, select: false },
     password: { type: String, required: true, select: false },
     role: {
       type: String,

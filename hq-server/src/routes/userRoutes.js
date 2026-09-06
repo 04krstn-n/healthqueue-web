@@ -9,6 +9,7 @@ const {
   getMyPatientProfile,
   updateMyPatientProfile,
   changePassword,
+  registerFcmToken,
 } = require('../controllers/userController');
 const { protect, authorizeRoles } = require('../middleware/auth');
 
@@ -16,6 +17,7 @@ router.use(protect);
 
 // ─── Current Logged-in User Endpoints ─────────────────────────────────────────
 router.put('/change-password', changePassword);
+router.put('/me/fcm-token', registerFcmToken);
 
 router
   .route('/me/patient')

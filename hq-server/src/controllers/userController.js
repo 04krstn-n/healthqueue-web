@@ -316,6 +316,23 @@ const changePassword = async (req, res) => {
   }
 };
 
+// PUT /api/users/me/fcm-token — Registers/updates this device's push token.
+// Called by the app right after login and whenever Firebase issues a
+// refreshed token. Silently accepts an empty/null token too, so logging
+// out (or disabling notifications) can clear it — a stale token left
+// behind would just make sendPushToUser() silently fail forever on a
+// dead device, which is harmless but worth avoiding.
+const registerFcmToken = async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+    await User.findByIdAndUpdate(req.user._id, { fcmToken: fcmToken || null });
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('registerFcmToken:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to register push token.' });
+  }
+};
+
 module.exports = {
   getUsers,
   getUser,
@@ -325,4 +342,5 @@ module.exports = {
   getMyPatientProfile,
   updateMyPatientProfile,
   changePassword,
+  registerFcmToken,
 };

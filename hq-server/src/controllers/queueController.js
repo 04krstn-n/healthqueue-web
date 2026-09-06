@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const QueueEntry = require('../models/QueueEntry');
 const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
-const Notification = require('../models/Notification');
+const { notifyUser } = require('../utils/notify');
 const { 
   getNextQueueNumber, 
   estimateWaitTime, 
@@ -211,9 +211,11 @@ const joinQueue = async (req, res) => {
       currentWaitingTime: estWait,
     });
 
-    // In-app notification dispatch
-    await Notification.create({
-      user: req.user._id,
+    // In-app notification + push (see utils/notify.js) — the push is what
+    // reaches the patient if the app is backgrounded or closed; the old
+    // Notification.create() call alone only ever showed up the next time
+    // they opened the app.
+    await notifyUser(req.user._id, {
       title: 'Queue Joined',
       message: `You joined the queue at ${clinic.name}. Queue Ticket #${queueNumber}. Est. wait: ${estWait} mins.`,
       type: 'queue',
@@ -343,8 +345,7 @@ const callPatient = async (req, res) => {
     // to throw a ValidationError (500 "Failed to call patient") on every
     // walk-in call.
     if (entry.patient) {
-      await Notification.create({
-        user: entry.patient,
+      await notifyUser(entry.patient, {
         title: 'It is your turn!',
         message: `Ticket #${entry.queueNumber} — Please proceed to the counter within 5 minutes.`,
         type: 'turn_alert',
