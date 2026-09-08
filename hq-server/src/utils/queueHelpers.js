@@ -3,21 +3,37 @@
  */
 const QueueEntry = require('../models/QueueEntry');
 const Clinic = require('../models/Clinic');
+const Counter = require('../models/Counter');
 
 /**
  * Generate the next queue number for a clinic today.
  * Format: <prefix><3-digit-number> e.g. Q001, Q002 …
+ *
+ * This used to count today's existing entries and return count+1 — that's
+ * a classic non-atomic "read, then use read+1" pattern. Two patients
+ * joining within milliseconds of each other could both read the count
+ * BEFORE either one's new entry was actually saved, so both would compute
+ * the same "next" number — same displayed queue number, even though their
+ * actual join order (and position in the queue) differed. This is the
+ * exact bug reported: same number, different position.
+ *
+ * findOneAndUpdate with $inc is a single atomic database operation —
+ * MongoDB guarantees two concurrent callers can never be handed the same
+ * resulting seq value, no matter how close together the requests arrive.
+ * Numbers stay fully sequential/consecutive (1, 2, 3, ...) with zero
+ * collisions, and the daily reset behavior is unchanged (see Counter.js).
  */
 const getNextQueueNumber = async (clinicId, prefix = 'Q') => {
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
+  const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC) — resets the counter daily
+  const counterId = `${clinicId}_${dateKey}_${prefix}`;
 
-  const count = await QueueEntry.countDocuments({
-    clinic: clinicId,
-    joinedAt: { $gte: start },
-  });
+  const counter = await Counter.findOneAndUpdate(
+    { _id: counterId },
+    { $inc: { seq: 1 } },
+    { upsert: true, new: true }
+  );
 
-  const num = String(count + 1).padStart(3, '0');
+  const num = String(counter.seq).padStart(3, '0');
   return `${prefix}${num}`;
 };
 

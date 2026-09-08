@@ -333,12 +333,32 @@ const registerFcmToken = async (req, res) => {
   }
 };
 
+// PUT /api/users/me/deactivate — lets a patient deactivate their OWN
+// account. Previously there was no self-service path at all — the only
+// deactivateUser endpoint is staff/admin-only (DELETE /users/:id,
+// restricted to facility_admin/super_admin), so a patient could never
+// actually deactivate their own account through the API. The mobile
+// app's "Deactivate Account" confirmation dialog existed, but the button
+// behind it only called local logout() — it never reached the server at
+// all, so the account stayed fully active while the app just looked like
+// it had signed the patient out.
+const deactivateMyAccount = async (req, res) => {
+  try {
+    await User.findByIdAndUpdate(req.user._id, { isActive: false });
+    return res.json({ success: true, message: 'Account deactivated.' });
+  } catch (err) {
+    console.error('deactivateMyAccount:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to deactivate account.' });
+  }
+};
+
 module.exports = {
   getUsers,
   getUser,
   createUser,
   updateUser,
   deactivateUser,
+  deactivateMyAccount,
   getMyPatientProfile,
   updateMyPatientProfile,
   changePassword,

@@ -6,6 +6,7 @@ const {
   createUser,
   updateUser,
   deactivateUser,
+  deactivateMyAccount,
   getMyPatientProfile,
   updateMyPatientProfile,
   changePassword,
@@ -18,6 +19,7 @@ router.use(protect);
 // ─── Current Logged-in User Endpoints ─────────────────────────────────────────
 router.put('/change-password', changePassword);
 router.put('/me/fcm-token', registerFcmToken);
+router.put('/me/deactivate', deactivateMyAccount);
 
 router
   .route('/me/patient')
