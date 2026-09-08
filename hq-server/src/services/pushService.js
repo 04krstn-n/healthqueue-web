@@ -127,7 +127,18 @@ async function sendPushToUser(userId, { title, message, data = {} }) {
     // with zero client-side code needed for that specific case — the
     // OS handles it. `data` is still included so the app can navigate
     // to the right screen if the user taps it.
-    await admin.messaging().send({
+    // Same modular-vs-namespaced API split as the cert() fix above —
+    // admin.messaging() isn't a function in this installed version
+    // ("admin.messaging is not a function"), because messaging lives in
+    // its own submodule (firebase-admin/messaging) rather than being
+    // bundled onto the main export. Try the classic style first in case
+    // a future/different version restores it, fall back to the modular
+    // submodule import otherwise.
+    const messaging = typeof admin.messaging === 'function'
+      ? admin.messaging()
+      : require('firebase-admin/messaging').getMessaging();
+
+    await messaging.send({
       token,
       notification: { title, body: message },
       data: Object.fromEntries(
