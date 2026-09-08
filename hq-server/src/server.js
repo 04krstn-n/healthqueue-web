@@ -45,6 +45,7 @@ const io = new Server(server, {
     origin: FRONTEND_ORIGINS,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,
+    origin: "https://localhost:3000" // Allow requests from localhost:3000 for development
   },
 });
 
@@ -80,6 +81,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
+  origin: "https://localhost:3000" // Allow requests from localhost:3000 for development
 }));
 
 app.use(express.json({ limit: '10mb' }));
