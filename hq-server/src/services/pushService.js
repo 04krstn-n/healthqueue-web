@@ -64,8 +64,20 @@ try {
     if (!serviceAccount.private_key || !serviceAccount.private_key.includes('BEGIN PRIVATE KEY')) {
       throw new Error('Parsed JSON is missing a valid private_key field — the key was likely mangled during copy/paste. Try the base64 approach described above.');
     }
-    if (!admin.apps.length) {
+    // Was `if (!admin.apps.length) { admin.initializeApp(...) }` — that
+    // relies on `admin.apps` being shaped a specific way, which can vary
+    // across firebase-admin SDK versions (this project has no version
+    // pin, so `npm install firebase-admin` always grabs whatever's
+    // newest). Try/catching the actual initializeApp() call instead and
+    // only ignoring the specific "already exists" error sidesteps that
+    // entirely — it doesn't matter what shape `admin.apps` has in
+    // whatever version got installed.
+    try {
       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } catch (initErr) {
+      if (!/already exists/i.test(initErr.message)) {
+        throw initErr;
+      }
     }
     firebaseReady = true;
     console.log('[Push] Firebase Admin initialized — push notifications enabled.');
@@ -74,6 +86,7 @@ try {
   }
 } catch (err) {
   console.error('[Push] Failed to initialize Firebase Admin:', err.message);
+  console.error(err.stack);
   firebaseReady = false;
 }
 
