@@ -29,10 +29,33 @@ let admin = null;
 let firebaseReady = false;
 
 try {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  // FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 is checked first — pasting the raw
+  // multi-line JSON into Heroku's Config Vars web form is a very common
+  // source of corruption, since the `private_key` field inside it contains
+  // literal \n escape sequences representing line breaks in the PEM key,
+  // and those are easy to accidentally mangle in a paste. A base64-encoded
+  // version has no newlines or special characters at all, so there's
+  // nothing left to corrupt — generate it with, e.g.:
+  //   base64 -w0 your-service-account-key.json     (Linux/macOS)
+  //   certutil -encode key.json key.b64             (Windows, then strip
+  //     the ----BEGIN/END----- header/footer lines certutil adds)
+  // or any online base64 encoder, then set that as
+  // FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 instead of the plain JSON var.
+  let raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (!raw && process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
+    raw = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64, 'base64').toString('utf-8');
+  }
   if (raw) {
     admin = require('firebase-admin');
-    const serviceAccount = JSON.parse(raw);
+    let serviceAccount;
+    try {
+      serviceAccount = JSON.parse(raw);
+    } catch (parseErr) {
+      throw new Error(`Could not parse service account JSON — likely corrupted in transit (see the base64 note above). ${parseErr.message}`);
+    }
+    if (!serviceAccount.private_key || !serviceAccount.private_key.includes('BEGIN PRIVATE KEY')) {
+      throw new Error('Parsed JSON is missing a valid private_key field — the key was likely mangled during copy/paste. Try the base64 approach described above.');
+    }
     if (!admin.apps.length) {
       admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     }
