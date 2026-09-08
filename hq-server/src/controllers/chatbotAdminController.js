@@ -3,7 +3,10 @@
  */
 const FAQ = require('../models/FAQ');
 const ChatLog = require('../models/ChatLog');
+const ChatSession = require('../models/ChatSession');
 const { HttpStatus, RASA_SERVER_URL, OPENAI_API_KEY } = require('../config/config');
+
+const RASA_ACTION_SERVER_URL = (process.env.RASA_ACTION_SERVER_URL || 'http://localhost:5055').replace(/\/$/, '');
 const { logAction } = require('../utils/auditLog');
 
 // ── FAQs ──────────────────────────────────────────────────────────────────────
@@ -162,26 +165,43 @@ const getAnalytics = async (req, res) => {
 
 // ── GET /api/chatbot-admin/rasa-status ────────────────────────────────────────
 const getRasaStatus = async (req, res) => {
+  const axios = require('axios');
+
   let rasaOnline = false;
   let rasaVersion = null;
+  let rasaError = null;
 
+  // Rasa Core exposes its version at /version. Do not use / as a health
+  // signal because the root response can vary by Rasa version.
   if (RASA_SERVER_URL) {
     try {
-      const axios = require('axios');
-      // Same cold-start reasoning as handleMessage — a short timeout here
-      // means this status check itself would report "offline" for a Rasa
-      // instance that's merely waking up, which is misleading for staff
-      // trying to diagnose whether Rasa is actually configured correctly.
-      const r = await axios.get(`${RASA_SERVER_URL}/`, { timeout: 10000 });
+      const r = await axios.get(`${RASA_SERVER_URL.replace(/\/$/, '')}/version`, {
+        timeout: 10000,
+      });
       rasaOnline = true;
       rasaVersion = r.data?.version || r.data?.rasa_version || null;
-    } catch (_) {
-      rasaOnline = false;
+    } catch (err) {
+      rasaError = err?.message || 'Rasa Core unavailable';
     }
   }
 
+  let actionServerOnline = false;
+  let actionServerError = null;
+
+  // Rasa SDK's action server exposes /health. This is checked independently
+  // from Core so the admin panel can distinguish "Rasa is up" from
+  // "Core is up but custom actions are unavailable".
+  try {
+    const r = await axios.get(`${RASA_ACTION_SERVER_URL}/health`, {
+      timeout: 10000,
+    });
+    actionServerOnline = r.status >= 200 && r.status < 300;
+  } catch (err) {
+    actionServerError = err?.message || 'Action Server unavailable';
+  }
+
   let activeMode = 'faq';
-  if (RASA_SERVER_URL && rasaOnline) activeMode = 'rasa';
+  if (rasaOnline && actionServerOnline) activeMode = 'rasa';
   else if (OPENAI_API_KEY) activeMode = 'openai';
 
   return res.status(HttpStatus.OK).json({
@@ -193,6 +213,14 @@ const getRasaStatus = async (req, res) => {
         online: rasaOnline,
         url: RASA_SERVER_URL || null,
         version: rasaVersion,
+        error: rasaError,
+      },
+      actionServer: {
+        configured: !!RASA_ACTION_SERVER_URL,
+        online: actionServerOnline,
+        url: RASA_ACTION_SERVER_URL || null,
+        healthEndpoint: `${RASA_ACTION_SERVER_URL}/health`,
+        error: actionServerError,
       },
       openai: {
         configured: !!OPENAI_API_KEY,
@@ -206,10 +234,16 @@ const getRasaStatus = async (req, res) => {
   });
 };
 
+
 // ── POST /api/chatbot-admin/test ──────────────────────────────────────────────
 const testChatbot = async (req, res) => {
   const { message } = req.body;
-  if (!message) return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'message is required.' });
+  if (!message) {
+    return res.status(HttpStatus.BAD_REQUEST).json({
+      success: false,
+      message: 'message is required.',
+    });
+  }
 
   const axios = require('axios');
   const OpenAI = require('openai');
@@ -217,18 +251,47 @@ const testChatbot = async (req, res) => {
   let response = null;
   let source = 'faq';
 
+  // The admin test panel still uses the real Rasa form/validation pipeline.
+  // Send authenticated-looking metadata so actions can establish identity
+  // and clinic context exactly as they do for the patient webhook. We do not
+  // pretend the admin is a patient; the metadata is explicitly marked as a
+  // test context. Backend patient-only writes will still be protected by the
+  // normal authorization middleware.
+  const adminToken =
+    (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
+  const mockClinicId =
+    req.user?.clinicId ? String(req.user.clinicId) : null;
+
+  const metadata = {
+    patient_token: adminToken,
+    patient_id: req.user?._id ? String(req.user._id) : 'admin-test-patient',
+    patient_name: req.user?.fullName || 'Admin Test Patient',
+    clinic_id: mockClinicId,
+    test_mode: true,
+    test_role: req.user?.role || 'admin',
+  };
+
   // Mode 1: Rasa
   if (RASA_SERVER_URL) {
     try {
-      const r = await axios.post(`${RASA_SERVER_URL}/webhooks/rest/webhook`, {
-        sender: 'admin-test', message: message.trim(),
-      }, { timeout: 10000 });
+      const r = await axios.post(
+        `${RASA_SERVER_URL.replace(/\/$/, '')}/webhooks/rest/webhook`,
+        {
+          sender: `admin-test-${req.user?._id || 'session'}`,
+          message: message.trim(),
+          metadata,
+        },
+        { timeout: 10000 }
+      );
+
       const msgs = r.data;
       if (Array.isArray(msgs) && msgs.length > 0) {
         response = msgs.map(m => m.text).filter(Boolean).join('\n');
         source = 'rasa';
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn('[Chatbot Admin] Rasa test failed:', err?.message || err);
+    }
   }
 
   // Mode 2: OpenAI
@@ -236,33 +299,57 @@ const testChatbot = async (req, res) => {
     try {
       const faqs = await FAQ.find({ isActive: true }).lean();
       const faqCtx = faqs.slice(0, 20).map((f, i) =>
-        `Q${i + 1}: ${f.question}\nA${i + 1}: ${f.answer}`).join('\n\n');
+        `Q${i + 1}: ${f.question}\nA${i + 1}: ${f.answer}`
+      ).join('\n\n');
+
       const client = new OpenAI({ apiKey: OPENAI_API_KEY });
       const comp = await client.chat.completions.create({
-        model: 'gpt-4o-mini', max_tokens: 200, temperature: 0.5,
+        model: 'gpt-4o-mini',
+        max_tokens: 200,
+        temperature: 0.5,
         messages: [
           { role: 'system', content: `You are HQ Assistant for HealthQueue+. Use this FAQ:\n${faqCtx}` },
           { role: 'user', content: message.trim() },
         ],
       });
+
       response = comp.choices[0]?.message?.content?.trim() || null;
       source = 'openai';
-    } catch (_) {}
+    } catch (err) {
+      console.warn('[Chatbot Admin] OpenAI test failed:', err?.message || err);
+    }
   }
 
   // Mode 3: FAQ keyword
   if (!response) {
     const msg = message.toLowerCase().trim();
     const faqs = await FAQ.find({ isActive: true });
-    let best = null, bestScore = 0;
+    let best = null;
+    let bestScore = 0;
+
     for (const faq of faqs) {
       let score = 0;
-      for (const kw of faq.keywords || []) { if (msg.includes(kw.toLowerCase())) score += 3; }
-      const qWords = faq.question.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      for (const w of qWords) { if (msg.includes(w)) score += 1; }
-      if (score > bestScore) { bestScore = score; best = faq; }
+      for (const kw of faq.keywords || []) {
+        if (msg.includes(kw.toLowerCase())) score += 3;
+      }
+      const qWords = faq.question.toLowerCase()
+        .split(/\s+/)
+        .filter(w => w.length > 3);
+
+      for (const w of qWords) {
+        if (msg.includes(w)) score += 1;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = faq;
+      }
     }
-    if (best && bestScore >= 2) { response = best.answer; source = 'faq'; }
+
+    if (best && bestScore >= 2) {
+      response = best.answer;
+      source = 'faq';
+    }
   }
 
   if (!response) {
@@ -270,8 +357,14 @@ const testChatbot = async (req, res) => {
     source = 'fallback';
   }
 
-  return res.status(HttpStatus.OK).json({ success: true, response, source });
+  return res.status(HttpStatus.OK).json({
+    success: true,
+    response,
+    source,
+    metadata,
+  });
 };
+
 
 // ── GET /api/chatbot-admin/escalated ──────────────────────────────────────────
 const getEscalatedLogs = async (req, res) => {
@@ -322,6 +415,50 @@ const clearChatLogs = async (req, res) => {
       $or: [{ clinicId }, { clinicId: null }],
     });
 
+    // Clearing logs can leave a ChatSession pointing at a deleted
+    // activeChatLogId. Reset staff-mode sessions whose active log no longer
+    // exists so patients are not permanently trapped in the live-agent mode.
+    const staffSessions = await ChatSession.find({
+      mode: 'staff',
+      $or: [
+        { clinicId },
+        { clinicId: null },
+      ],
+    }).select('_id activeChatLogId clinicId');
+
+    const activeLogIds = new Set(
+      staffSessions
+        .map(s => s.activeChatLogId ? String(s.activeChatLogId) : null)
+        .filter(Boolean)
+    );
+
+    const remainingLogs = activeLogIds.size
+      ? await ChatLog.find({
+          _id: { $in: [...activeLogIds] },
+        }).select('_id')
+      : [];
+
+    const existingLogIds = new Set(remainingLogs.map(l => String(l._id)));
+    const orphanedSessionIds = staffSessions
+      .filter(s => !s.activeChatLogId || !existingLogIds.has(String(s.activeChatLogId)))
+      .map(s => s._id);
+
+    let resetSessions = 0;
+    if (orphanedSessionIds.length) {
+      const reset = await ChatSession.updateMany(
+        { _id: { $in: orphanedSessionIds } },
+        {
+          $set: {
+            mode: 'bot',
+            assignedStaff: null,
+            activeChatLogId: null,
+            lastActivityAt: new Date(),
+          },
+        }
+      );
+      resetSessions = reset.modifiedCount || 0;
+    }
+
     await logAction({
       actor: req.user,
       action: 'clear_chat_logs',
@@ -329,19 +466,27 @@ const clearChatLogs = async (req, res) => {
       targetId: clinicId,
       targetLabel: `Cleared ${result.deletedCount} chat log(s)`,
       clinicId,
-      details: { deletedCount: result.deletedCount },
+      details: {
+        deletedCount: result.deletedCount,
+        resetOrphanedChatSessions: resetSessions,
+      },
     });
 
     return res.status(HttpStatus.OK).json({
       success: true,
       message: `Cleared ${result.deletedCount} chat log(s).`,
       deletedCount: result.deletedCount,
+      resetOrphanedChatSessions: resetSessions,
     });
   } catch (err) {
     console.error('clearChatLogs Error:', err.message);
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to clear chat logs.' });
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      message: 'Failed to clear chat logs.',
+    });
   }
 };
+
 
 module.exports = {
   getEscalatedLogs,

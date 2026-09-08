@@ -6,6 +6,7 @@ const axios = require('axios');
 const OpenAI = require('openai');
 const FAQ = require('../models/FAQ');
 const ChatLog = require('../models/ChatLog');
+const ChatSession = require('../models/ChatSession');
 const QueueEntry = require('../models/QueueEntry');
 const Appointment = require('../models/Appointment');
 const { HttpStatus, OPENAI_API_KEY, RASA_SERVER_URL } = require('../config/config');
@@ -136,6 +137,81 @@ const handleMessage = async (req, res) => {
     let reply = null;
     let source = 'faq';
     let autoEscalate = false;
+
+    // ── Live staff handoff ─────────────────────────────────────────────────
+    // Once a patient has an active staff ChatSession, the bot pipeline must
+    // stop completely. Otherwise Rasa/OpenAI can answer over the human agent.
+    // The staff session owns the clinic context, with explicit/request
+    // context and the patient's active queue/appointment as fallbacks.
+    const userId = req.user?._id || patientId;
+    const activeStaffSession = userId
+      ? await ChatSession.findOne({ patient: userId, mode: 'staff' })
+      : null;
+
+    if (activeStaffSession) {
+      const staffClinicId =
+        activeStaffSession.clinicId ||
+        clinicId ||
+        await resolvePatientClinicId(userId);
+
+      const io = req.app.get('io');
+      const patientToken =
+        (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
+
+      // Keep a durable copy of the patient's live-agent message. This gives
+      // staff a history even if a socket disconnects for a moment.
+      const liveLog = await ChatLog.create({
+        patient: userId,
+        senderId: String(userId),
+        message: message.trim(),
+        reply: '',
+        response: '',
+        source: 'staff',
+        isFallback: false,
+        isEscalated: true,
+        clinicId: staffClinicId || null,
+      });
+
+      await ChatSession.findByIdAndUpdate(activeStaffSession._id, {
+        lastActivityAt: new Date(),
+        activeChatLogId: liveLog._id,
+        ...(staffClinicId ? { clinicId: staffClinicId } : {}),
+      });
+
+      const staffPayload = {
+        type: 'patient_message',
+        logId: String(liveLog._id),
+        patient_id: String(userId),
+        patient_name: req.user?.fullName || null,
+        clinic_id: staffClinicId ? String(staffClinicId) : null,
+        message: message.trim(),
+        timestamp: new Date().toISOString(),
+        metadata: {
+          patient_token: patientToken,
+          patient_id: String(userId),
+          patient_name: req.user?.fullName || null,
+          clinic_id: staffClinicId ? String(staffClinicId) : null,
+        },
+      };
+
+      if (io && staffClinicId) {
+        io.to(`clinic_${staffClinicId}`).emit('chat_message', staffPayload);
+      } else if (io) {
+        // A staff-mode session without a clinic is orphaned. Do not route the
+        // message to a random clinic; notify globally so an admin can repair
+        // the session assignment.
+        io.emit('chat_message_unassigned', staffPayload);
+      }
+
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        response: "Your message has been sent to our healthcare staff. Please wait for their reply.",
+        source: 'staff',
+        isStaffHandoff: true,
+        isEscalated: true,
+        logId: liveLog._id,
+      });
+    }
 
     // 1. Tier 1: RASA AI Server
     if (RASA_SERVER_URL) {
