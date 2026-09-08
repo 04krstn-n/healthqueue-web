@@ -41,11 +41,19 @@ try {
   //     the ----BEGIN/END----- header/footer lines certutil adds)
   // or any online base64 encoder, then set that as
   // FIREBASE_SERVICE_ACCOUNT_KEY_BASE64 instead of the plain JSON var.
-  let raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-  if (!raw && process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64) {
-    raw = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64, 'base64').toString('utf-8');
-  }
+  // Base64 is checked FIRST now, not as a fallback — if both vars happen
+  // to be set (e.g. the original FIREBASE_SERVICE_ACCOUNT_KEY was never
+  // deleted after switching to the base64 approach), the reliable one
+  // should always win rather than silently using whichever one happens
+  // to be checked first.
+  let raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64
+    ? Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64, 'base64').toString('utf-8')
+    : process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  const usedSource = process.env.FIREBASE_SERVICE_ACCOUNT_KEY_BASE64
+    ? 'FIREBASE_SERVICE_ACCOUNT_KEY_BASE64'
+    : 'FIREBASE_SERVICE_ACCOUNT_KEY';
   if (raw) {
+    console.log(`[Push] Reading credentials from ${usedSource}.`);
     admin = require('firebase-admin');
     let serviceAccount;
     try {
