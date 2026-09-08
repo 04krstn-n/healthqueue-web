@@ -55,19 +55,21 @@ try {
   if (raw) {
     console.log(`[Push] Reading credentials from ${usedSource}.`);
     admin = require('firebase-admin');
-    // Some firebase-admin versions ship both ESM and CommonJS builds, and
-    // depending on exactly how that package resolves through require(),
-    // the actual SDK (credential, initializeApp, etc.) can end up nested
-    // under admin.default instead of directly on admin — which is
-    // exactly what the "Cannot read properties of undefined (reading
-    // 'cert')" error means: admin itself loaded fine, but admin.credential
-    // specifically wasn't where this code expected it.
     if (!admin.credential && admin.default) {
       admin = admin.default;
     }
-    if (!admin.credential) {
+    // The installed firebase-admin version turned out to use the newer
+    // "modular" API surface — cert()/applicationDefault()/refreshToken()
+    // are exported directly on the module rather than nested under a
+    // .credential namespace (confirmed from the actual key list an
+    // earlier version of this diagnostic printed: initializeApp, getApp,
+    // getApps, deleteApp, applicationDefault, cert, refreshToken, ... —
+    // no .credential at all). Support both shapes so this keeps working
+    // regardless of which style whatever version gets installed uses.
+    const certFn = admin.credential?.cert || admin.cert;
+    if (typeof certFn !== 'function') {
       throw new Error(
-        `firebase-admin loaded but has no .credential — got keys: [${Object.keys(admin).join(', ')}]. ` +
+        `firebase-admin loaded but no cert() function found in either shape — got keys: [${Object.keys(admin).join(', ')}]. ` +
         'This usually means an incompatible firebase-admin version got installed; check package.json/package-lock.json.'
       );
     }
@@ -89,7 +91,7 @@ try {
     // entirely — it doesn't matter what shape `admin.apps` has in
     // whatever version got installed.
     try {
-      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      admin.initializeApp({ credential: certFn(serviceAccount) });
     } catch (initErr) {
       if (!/already exists/i.test(initErr.message)) {
         throw initErr;
