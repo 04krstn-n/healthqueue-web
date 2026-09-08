@@ -55,6 +55,22 @@ try {
   if (raw) {
     console.log(`[Push] Reading credentials from ${usedSource}.`);
     admin = require('firebase-admin');
+    // Some firebase-admin versions ship both ESM and CommonJS builds, and
+    // depending on exactly how that package resolves through require(),
+    // the actual SDK (credential, initializeApp, etc.) can end up nested
+    // under admin.default instead of directly on admin — which is
+    // exactly what the "Cannot read properties of undefined (reading
+    // 'cert')" error means: admin itself loaded fine, but admin.credential
+    // specifically wasn't where this code expected it.
+    if (!admin.credential && admin.default) {
+      admin = admin.default;
+    }
+    if (!admin.credential) {
+      throw new Error(
+        `firebase-admin loaded but has no .credential — got keys: [${Object.keys(admin).join(', ')}]. ` +
+        'This usually means an incompatible firebase-admin version got installed; check package.json/package-lock.json.'
+      );
+    }
     let serviceAccount;
     try {
       serviceAccount = JSON.parse(raw);
