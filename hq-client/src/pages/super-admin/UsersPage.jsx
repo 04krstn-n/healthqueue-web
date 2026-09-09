@@ -139,18 +139,6 @@ export default function UserManagementPage() {
     }
   }, [])
 
-  useEffect(() => {
-  if (!userSuccess) return
-  const t = setTimeout(() => setUserSuccess(''), 4000)
-  return () => clearTimeout(t)
-}, [userSuccess])
-
-useEffect(() => {
-  if (!userError) return
-  const t = setTimeout(() => setUserError(''), 4000)
-  return () => clearTimeout(t)
-}, [userError])
-
   // ─── Data Loading ────────────────────────────────────────────────────────────
   const loadUsers = useCallback(async () => {
     setLoading(true)

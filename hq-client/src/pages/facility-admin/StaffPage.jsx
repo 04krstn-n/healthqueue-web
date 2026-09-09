@@ -218,20 +218,6 @@ export default function StaffPage() {
     }
   }
 
-    const handleDeactivate = async (staffId) => {
-    setDeactivating(true)
-    try {
-      await staffApi.update(staffId, { isActive: false })
-      setDeactivateTarget(null)
-      showToast('Staff member deactivated')
-      await loadStaff()
-    } catch (e) {
-      showToast(e?.response?.data?.message || 'Failed to deactivate staff member')
-    } finally {
-      setDeactivating(false)
-    }
-  }
-
   const handleReactivate = async (s) => {
     setReactivating(true)
     try {

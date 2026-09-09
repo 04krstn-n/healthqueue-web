@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import logo from '../../src/assets/img/hq_logo.png'
 
 import './landingpage.css'
@@ -162,8 +163,14 @@ const NAV_LINKS = [
 ]
 
 export default function LandingPage() {
+  const navigate = useNavigate()
   const [qrOpen, setQrOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+
+  const goToAdminLogin = () => {
+    setMenuOpen(false)
+    navigate('/login')
+  }
 
   return (
     <div className="hq-landing min-h-screen bg-white" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -185,6 +192,14 @@ export default function LandingPage() {
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
+            <button type="button" onClick={goToAdminLogin}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold border transition-all hover:bg-gray-50"
+              style={{ borderColor: '#d1e8f5', color: '#174e7d' }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <rect x="3" y="11" width="18" height="11" rx="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              Admin
+            </button>
             <button onClick={() => setQrOpen(true)}
               className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all hover:opacity-90"
               style={{ background: 'linear-gradient(135deg, #1a6fa8, #174e7d)' }}>
@@ -207,6 +222,11 @@ export default function LandingPage() {
             {NAV_LINKS.map(l => (
               <a key={l.label} href={l.href} className="text-sm font-medium text-gray-600" onClick={() => setMenuOpen(false)}>{l.label}</a>
             ))}
+            <button type="button" onClick={goToAdminLogin}
+              className="text-sm font-semibold px-4 py-2.5 rounded-lg border text-center"
+              style={{ borderColor: '#d1e8f5', color: '#174e7d' }}>
+              Admin Login
+            </button>
             <button onClick={() => { setQrOpen(true); setMenuOpen(false) }}
               className="text-sm font-semibold px-4 py-2.5 rounded-lg text-white"
               style={{ background: 'linear-gradient(135deg, #1a6fa8, #174e7d)' }}>
@@ -600,9 +620,17 @@ export default function LandingPage() {
             </ul>
           </div>
 
-          {/* Compliance */}
+          {/* Admin + Compliance */}
           <div>
-            <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Compliance</h4>
+            <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Administration</h4>
+            <button type="button" onClick={goToAdminLogin}
+              className="flex items-center gap-2 w-full px-4 py-3 rounded-xl text-sm font-semibold text-white mb-6 transition-all hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg, #1a6fa8, #174e7d)' }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
+                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              Sign In to Admin Dashboard
+            </button>
 
             {/* Compliance badges */}
             <div className="space-y-2">

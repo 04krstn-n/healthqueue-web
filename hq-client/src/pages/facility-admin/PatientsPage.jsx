@@ -155,20 +155,6 @@ export default function PatientsPage() {
     }
   }
 
-  const handleDeactivate = async (patientId) => {
-  setDeactivating(true)
-  try {
-    await patientsApi.update(patientId, { isActive: false })
-    setDeactivateTarget(null)
-    showToast('Patient deactivated')
-    loadPatients()
-  } catch (e) {
-    showToast(e?.response?.data?.message || 'Failed to deactivate patient')
-  } finally {
-    setDeactivating(false)
-  }
-}
-
   const handleReactivate = async (p) => {
     setReactivating(true)
     try {
