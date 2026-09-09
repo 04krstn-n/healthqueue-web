@@ -5,6 +5,7 @@ const FAQ = require('../models/FAQ');
 const ChatLog = require('../models/ChatLog');
 const { HttpStatus, RASA_SERVER_URL, OPENAI_API_KEY } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
+const { notifyUser } = require('../utils/notify');
 
 // ── FAQs ──────────────────────────────────────────────────────────────────────
 const getFAQs = async (req, res) => {
@@ -343,6 +344,102 @@ const clearChatLogs = async (req, res) => {
   }
 };
 
+// ── GET /api/chatbot-admin/threads/:patientId/messages ─────────────────────
+// Full conversation history for one patient — every ChatLog row (bot
+// replies AND staff replies alike), oldest first. Backs the tablet's
+// "Conversation with [patient]" thread dialog (see
+// InquiryProvider.loadThread / patient_inquiry_screen.dart's
+// _replyDialog). This endpoint — and replyToThread below — simply never
+// existed before, even though the ChatLog schema was already designed
+// for it (source: 'staff' has been a valid enum value this whole time):
+// the tablet's "Reply" button was calling a route that 404'd.
+const getThreadMessages = async (req, res) => {
+  try {
+    const logs = await ChatLog.find({ patient: req.params.patientId })
+      .sort({ createdAt: 1 })
+      .limit(200);
+    return res.status(HttpStatus.OK).json({ success: true, data: logs });
+  } catch (err) {
+    console.error('getThreadMessages Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to load conversation.' });
+  }
+};
+
+// ── POST /api/chatbot-admin/threads/:patientId/reply ────────────────────────
+// Staff sends a live reply directly into the patient's conversation.
+// Creates its own ChatLog row (source: 'staff', message: '' since staff
+// isn't "asking" anything — matches ThreadMessageModel.fromJson's
+// patientText-empty-for-staff-rows expectation on the tablet). Does NOT
+// resolve any escalation on its own — that stays a separate, explicit
+// "Resolve & Close" action in the tablet UI, so staff can go back and
+// forth before actually closing it out.
+const replyToThread = async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Reply text is required.' });
+    }
+    const patientId = req.params.patientId;
+    const replyText = text.trim();
+
+    const log = await ChatLog.create({
+      patient: patientId,
+      senderId: 'staff',
+      message: '',
+      reply: replyText,
+      response: replyText,
+      source: 'staff',
+      escalatedToStaff: req.user._id,
+      clinicId: req.user.clinicId || null,
+    });
+
+    const io = req.app.get('io');
+    if (io) {
+      // Tells any OTHER staff viewing this patient's inbox/thread to
+      // refresh (see InquiryProvider.loadInquiries's chat_thread_message
+      // listener) — same clinic-room + global-fallback pattern
+      // emitEscalation already uses in chatbotController.js.
+      const staffPayload = { patientId, logId: log._id };
+      if (req.user.clinicId) io.to(`clinic_${req.user.clinicId}`).emit('chat_thread_message', staffPayload);
+      io.emit('global_chat_thread_message', staffPayload);
+
+      // Live-updates the patient's OWN chat screen immediately if they
+      // currently have it open — separate from the push notification
+      // below, which is what reaches them if they don't.
+      io.to(`user_${patientId}`).emit('staff_chat_reply', {
+        logId: log._id,
+        reply: replyText,
+        createdAt: log.createdAt,
+      });
+    }
+
+    // Actually reaches the patient even if the app is backgrounded/
+    // closed — this is the piece that makes "replying" mean something
+    // beyond just staff's own view of the conversation.
+    await notifyUser(patientId, {
+      title: 'New reply from clinic staff',
+      message: replyText.length > 80 ? `${replyText.slice(0, 77)}...` : replyText,
+      type: 'staff_reply',
+      refType: 'ChatLog',
+      refId: log._id,
+    });
+
+    await logAction({
+      actor: req.user,
+      action: 'reply',
+      targetType: 'ChatLog',
+      targetId: log._id,
+      targetLabel: 'Replied to patient conversation',
+      clinicId: req.user.clinicId,
+    });
+
+    return res.status(HttpStatus.OK).json({ success: true, data: log });
+  } catch (err) {
+    console.error('replyToThread Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to send reply.' });
+  }
+};
+
 module.exports = {
   getEscalatedLogs,
   getRasaStatus,
@@ -354,4 +451,6 @@ module.exports = {
   getChatLogs,
   getAnalytics,
   clearChatLogs,
+  getThreadMessages,
+  replyToThread,
 };
