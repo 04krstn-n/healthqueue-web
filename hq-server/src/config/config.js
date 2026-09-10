@@ -11,29 +11,11 @@ if (result.error) {
 
 const { HttpStatus } = require('../config/constants');
 
-const NODE_ENV = process.env.NODE_ENV || 'development';
-
-// JWT_SECRET and FRONTEND_ORIGINS must never silently fall back to an
-// insecure default. A hardcoded/shared JWT secret lets anyone forge a
-// valid token for any user (including super_admin), and a wildcard CORS
-// origin combined with credentials:true opens the API to any site. In
-// production we hard-fail startup rather than run with either unset. In
-// development/test we allow a clearly-labeled, non-production-looking
-// fallback so local setup still works without a .env file.
-const isProd = NODE_ENV === 'production';
-
-if (isProd && !process.env.JWT_SECRET) {
-  throw new Error('FATAL: JWT_SECRET must be set in the environment in production. Refusing to start.');
-}
-if (isProd && !process.env.FRONTEND_ORIGINS) {
-  throw new Error('FATAL: FRONTEND_ORIGINS must be set in the environment in production. Refusing to start.');
-}
-
 const env = {
   PORT: parseInt(process.env.PORT || '4000', 10),
-  NODE_ENV,
+  NODE_ENV: process.env.NODE_ENV || 'development',
   MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/pfg_hqdb',
-  JWT_SECRET: process.env.JWT_SECRET || 'dev-only-insecure-secret-do-not-use-in-production',
+  JWT_SECRET: process.env.JWT_SECRET || 'power_five_girls_health_queue_secret_key',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '30d',
 
   // Integrations & Keys
@@ -43,17 +25,15 @@ const env = {
   RASA_SERVER_URL: process.env.RASA_SERVER_URL || 'http://localhost:5005',
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
 
-  // CORS Security — no wildcard fallback. In dev, default to the local
-  // Vite origin only; production requires FRONTEND_ORIGINS to be set
-  // (enforced above).
+  // CORS Security
   FRONTEND_ORIGINS: process.env.FRONTEND_ORIGINS
     ? process.env.FRONTEND_ORIGINS.split(',').map((o) => o.trim())
-    : ['http://localhost:5173'],
+    : '*',
 };
 
 // Validate environment variables in non-test mode
 if (env.NODE_ENV !== 'test') {
-  const requiredKeys = ['MONGO_URI', 'JWT_SECRET', 'FRONTEND_ORIGINS'];
+  const requiredKeys = ['MONGO_URI', 'JWT_SECRET'];
 
   requiredKeys.forEach((key) => {
     if (!process.env[key]) {

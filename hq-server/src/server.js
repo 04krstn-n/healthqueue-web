@@ -98,27 +98,6 @@ const limiter = rateLimit({
 });
 app.use('/api', limiter);
 
-// Stricter limiter for auth endpoints — the general /api limiter (200/15min)
-// is too loose to meaningfully slow down password/OTP brute-forcing, since
-// it's shared across every route. This applies on top of it, scoped only to
-// login/OTP/password-reset.
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    status: HttpStatus.BAD_REQUEST,
-    message: 'Too many attempts. Please wait a few minutes before trying again.',
-  },
-});
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/verify-otp', authLimiter);
-app.use('/api/auth/resend-otp', authLimiter);
-app.use('/api/auth/forgot-password', authLimiter);
-app.use('/api/auth/verify-reset-otp', authLimiter);
-app.use('/api/auth/reset-password', authLimiter);
-
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   res.status(HttpStatus.OK).json({ 
