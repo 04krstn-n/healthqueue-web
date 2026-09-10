@@ -1,8 +1,13 @@
 {
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
-      "destination": "/",
       "headers": [
         {
           "key": "Content-Security-Policy",
@@ -28,7 +33,6 @@
     },
     {
       "source": "/(.*).(css|js|svg|png|jpg|jpeg|woff|woff2)",
-      "destination": "/",
       "headers": [
         {
           "key": "Access-Control-Allow-Origin",
