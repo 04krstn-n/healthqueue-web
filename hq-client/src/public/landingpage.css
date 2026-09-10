@@ -1,9 +1,23 @@
 @import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap");
-@import "tailwindcss";
+
+/*
+ * HealthQueue+ Landing Page CSS
+ *
+ * IMPORTANT:
+ * This file intentionally does NOT import Tailwind's full entry point.
+ * Full Tailwind includes Preflight, which resets global HTML elements
+ * and can affect the Queue Management/admin pages.
+ *
+ * Tailwind theme + utilities are kept available for this page.
+ */
+
+@import "tailwindcss/theme.css";
+@import "tailwindcss/utilities.css";
 
 @theme {
   --font-display: "Outfit", sans-serif;
   --font-body: "Inter", sans-serif;
+
   --color-hq-green: #45c245;
   --color-hq-green-dark: #2ea02e;
   --color-hq-blue: #1a6fa8;
@@ -12,35 +26,69 @@
   --color-hq-muted: #6b8cac;
 }
 
-html {
-  scroll-behavior: smooth;
-}
+/* =========================================================
+   LANDING PAGE ONLY
+   ========================================================= */
 
 .hq-landing {
   font-family: "Inter", sans-serif;
+  scrollbar-width: thin;
+  scrollbar-color: #c7d8eb transparent;
 }
 
-::-webkit-scrollbar {
+/* Smooth scrolling only inside the landing page */
+.hq-landing {
+  scroll-behavior: smooth;
+}
+
+/* Landing-page scrollbar only */
+.hq-landing::-webkit-scrollbar {
   width: 6px;
 }
-::-webkit-scrollbar-track {
+
+.hq-landing::-webkit-scrollbar-track {
   background: transparent;
 }
-::-webkit-scrollbar-thumb {
+
+.hq-landing::-webkit-scrollbar-thumb {
   background: #c7d8eb;
   border-radius: 3px;
 }
-::-webkit-scrollbar-thumb:hover {
+
+.hq-landing::-webkit-scrollbar-thumb:hover {
   background: #1a6fa8;
 }
 
+/* Landing-page width overrides */
 .hq-landing .max-w-6xl {
   max-width: 72rem;
 }
+
 .hq-landing .max-w-2xl {
   max-width: 42rem;
 }
+
 .hq-landing .mx-auto {
   margin-left: auto;
   margin-right: auto;
+}
+
+/* Keep interactive elements visually consistent on this page */
+.hq-landing button,
+.hq-landing input,
+.hq-landing textarea,
+.hq-landing select {
+  font-family: inherit;
+}
+
+.hq-landing img {
+  max-width: 100%;
+}
+
+/*
+ * Anchor scrolling:
+ * The fixed navbar is 4rem tall, so sections don't hide underneath it.
+ */
+.hq-landing section[id] {
+  scroll-margin-top: 4.5rem;
 }
