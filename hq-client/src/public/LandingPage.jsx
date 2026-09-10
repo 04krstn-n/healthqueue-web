@@ -754,20 +754,28 @@ export default function LandingPage() {
 
           <div>
             <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Quick Links</h4>
-            <ul className="space-y-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            <ul className="footer-links space-y-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
               {[['About HealthQueue+', '#about'], ['Core Features', '#features'], ['Our Locations', '#branches'], ['Download the App', '#']].map(([label, href]) => (
-                <li key={label}><a href={href} className="hover:text-white transition-colors">{label}</a></li>
+                <li key={label}>
+                  <a href={href} className="hover:text-white transition-colors">
+                    {label}
+                  </a>
+                </li>
               ))}
             </ul>
           </div>
 
           <div>
             <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Our Network</h4>
-            <ul className="space-y-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              {BRANCHES.map(b => (
-                <li key={b.city}><a href="#branches" className="hover:text-white transition-colors">{b.city}</a></li>
-              ))}
-            </ul>
+            <ul className="footer-links space-y-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            {BRANCHES.map(b => (
+              <li key={b.city}>
+                <a href="#branches" className="hover:text-white transition-colors">
+                  {b.city}
+                </a>
+              </li>
+            ))}
+          </ul>
           </div>
 
           <div>

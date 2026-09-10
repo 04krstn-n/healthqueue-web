@@ -85,6 +85,13 @@
   max-width: 100%;
 }
 
+/* Footer link lists */
+.hq-landing .footer-links {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
 /*
  * Anchor scrolling:
  * The fixed navbar is 4rem tall, so sections don't hide underneath it.
