@@ -94,6 +94,38 @@ export default function AuditLogPage({ onBack }) {
     )
   })
 
+  const handleExportCSV = () => {
+    const rows = [
+      ['Timestamp', 'Staff/Admin', 'Role', 'Action', 'Target Type', 'Target'],
+    ]
+    filteredLogs.forEach((log) => {
+      rows.push([
+        log.createdAt
+          ? new Date(log.createdAt).toLocaleString('en-PH', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '',
+        log.actorName || '',
+        log.actorRole || '',
+        ACTION_LABELS[log.action] || log.action || '',
+        log.targetType || '',
+        log.targetLabel || '',
+      ])
+    })
+    const csv = rows
+      .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
+      .join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `audit_log_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+  }
+
   return (
     <div className={styles.page}>
       {/* Header */}
@@ -102,13 +134,28 @@ export default function AuditLogPage({ onBack }) {
           <div className={styles.title}>Audit Log</div>
           <div className={styles.sub}>A record of staff and admin actions at your clinic</div>
         </div>
-        <button className="btn btn-outline" onClick={onBack} style={{ display: 'flex', gap: 6, alignItems: 'center' }} >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="19" y1="12" x2="5" y2="12" />
-            <polyline points="12 19 5 12 12 5" />
-          </svg>
-          Back to Dashboard
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-outline"
+            onClick={handleExportCSV}
+            disabled={filteredLogs.length === 0}
+            style={{ display: 'flex', gap: 6, alignItems: 'center' }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Export CSV
+          </button>
+          <button className="btn btn-outline" onClick={onBack} style={{ display: 'flex', gap: 6, alignItems: 'center' }} >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="19" y1="12" x2="5" y2="12" />
+              <polyline points="12 19 5 12 12 5" />
+            </svg>
+            Back to Dashboard
+          </button>
+        </div>
       </div>
 
       <div className="card">

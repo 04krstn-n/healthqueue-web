@@ -165,8 +165,9 @@ export default function PatientsPage() {
   } catch (e) {
     showToast(e?.response?.data?.message || 'Failed to deactivate patient')
   } finally {
-    setDeactivating(false)}
+    setDeactivating(false)
   }
+}
 
   const handleReactivate = async (p) => {
     setReactivating(true)

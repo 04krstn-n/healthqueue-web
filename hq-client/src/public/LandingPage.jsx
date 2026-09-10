@@ -348,69 +348,97 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ─────────────────── 3. LOCATIONS ─────────────────── */}
-      <section id="branches" className="py-20 px-5" style={{ background: 'linear-gradient(180deg, #deeeff 0%, #c8e3f7 100%)' }}>
+      {/* ─────────────────── HOW IT WORKS ─────────────────── */}
+      <section id="how-it-works" className="py-20 px-5" style={{ background: 'linear-gradient(180deg, #deeeff 0%, #c8e3f7 100%)' }}>
         <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <p className="text-xs font-bold tracking-widest uppercase mb-3" style={{ color: '#1a6fa8' }}>Our Locations</p>
+          <div className="text-center mb-14">
+            <p className="text-xs font-bold tracking-widest uppercase mb-3" style={{ color: '#1a6fa8' }}>How It Works</p>
             <h2 className="text-3xl lg:text-4xl"
               style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 700, color: '#0c2d4e', letterSpacing: '-0.02em' }}>
-              Health Centers Near You
+              From Anywhere to Walk-In, in Four Moves
             </h2>
             <p className="text-base mt-3 max-w-xl mx-auto" style={{ color: '#2d5a82' }}>
-              HealthQueue+ is live across 6 public health centers in Metro Manila — each with real-time queue management and AI-powered patient routing.
+              No app tutorial needed — join a queue in seconds and let HealthQueue+ handle the waiting.
             </p>
           </div>
 
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {BRANCHES.map(b => (
-              <div key={b.name}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[
+              {
+                title: 'Join Remotely',
+                desc: 'Open the app and get in line from home — no need to be there yet.',
+                img: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=500&h=400&fit=crop&auto=format',
+                alt: 'Person using a phone at home',
+                icon: (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
+                    <rect x="5" y="2" width="14" height="20" rx="2" /><path d="M9 18h6" />
+                  </svg>
+                ),
+                color: '#1a6fa8',
+              },
+              {
+                title: 'See Your Wait',
+                desc: 'AI forecasting gives you a live, honest estimate — not a guess.',
+                img: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=500&h=400&fit=crop&auto=format',
+                alt: 'Dashboard showing live data on a screen',
+                icon: (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
+                    <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+                  </svg>
+                ),
+                color: '#174e7d',
+              },
+              {
+                title: 'Get Notified',
+                desc: "We'll ping you as your turn approaches, so you can time your arrival.",
+                img: 'https://images.unsplash.com/photo-1622676666869-d5deda419ff9?w=500&h=400&fit=crop&auto=format',
+                alt: 'Phone showing a notification alert',
+                icon: (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                ),
+                color: '#2ea02e',
+              },
+              {
+                title: 'Walk Straight In',
+                desc: 'Arrive within your 5-minute grace period — skip the line entirely.',
+                img: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=500&h=400&fit=crop&auto=format',
+                alt: 'Patient walking into a clinic',
+                icon: (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
+                    <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+                  </svg>
+                ),
+                color: '#45c245',
+              },
+            ].map(step => (
+              <div key={step.title}
                 className="rounded-2xl overflow-hidden bg-white hover:shadow-xl hover:-translate-y-1.5 transition-all duration-300 group"
                 style={{ border: '1px solid #b8d8f0' }}>
-                <div className="relative h-48 overflow-hidden" style={{ background: '#c8e3f7' }}>
-                  <img src={b.img} alt={b.alt}
+                <div className="relative h-40 overflow-hidden" style={{ background: '#c8e3f7' }}>
+                  <img src={step.img} alt={step.alt}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                  <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(23,78,125,0.55) 0%, transparent 55%)' }} />
-                  <span className="absolute top-3 right-3 text-xs font-bold px-2.5 py-1 rounded-full"
-                    style={{
-                      background: b.status === 'Busy' ? '#fff3cd' : '#d4edda',
-                      color: b.status === 'Busy' ? '#856404' : '#155724',
-                    }}>
-                    {b.status === 'Busy' ? '🔴 Busy' : '🟢 Open'}
-                  </span>
-                  <p className="absolute bottom-3 left-4 text-white text-sm font-bold"
-                    style={{ fontFamily: "'Outfit', sans-serif", textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>
-                    {b.name}
-                  </p>
-                </div>
-
-                <div className="p-4">
-                  <p className="text-xs mb-3" style={{ color: '#3d6e96' }}>{b.address}</p>
-                  <div className="flex items-center justify-between text-xs mb-4" style={{ color: '#6b8cac' }}>
-                    <span className="flex items-center gap-1">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                      </svg>
-                      {b.queue} in queue
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 3.1 4.18 2 2 0 0 1 5.08 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L9.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 23 17z"/>
-                      </svg>
-                      {b.phone}
-                    </span>
+                  <div className="absolute inset-0" style={{ background: 'linear-gradient(to top, rgba(23,78,125,0.45) 0%, transparent 60%)' }} />
+                  <div className="absolute bottom-3 left-3 w-9 h-9 rounded-xl flex items-center justify-center bg-white"
+                    style={{ color: step.color }}>
+                    {step.icon}
                   </div>
-                  <button className="w-full py-2 rounded-xl text-xs font-semibold transition-all hover:opacity-80"
-                    style={{ background: '#deeeff', color: '#1a6fa8' }}>
-                    View Queue Status
-                  </button>
+                </div>
+                <div className="p-4">
+                  <h3 className="text-base font-semibold mb-1.5" style={{ fontFamily: "'Outfit', sans-serif", color: '#0c2d4e' }}>
+                    {step.title}
+                  </h3>
+                  <p className="text-sm leading-relaxed" style={{ color: '#3d6e96' }}>
+                    {step.desc}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
         </div>
       </section>
+      
 
       {/* ─────────────────── 4. AUDIENCE ROLES ─────────────────── */}
       <section id="audience" className="py-20 px-5" style={{ background: 'linear-gradient(180deg, #e4f1fb 0%, #cfe5f7 100%)' }}>

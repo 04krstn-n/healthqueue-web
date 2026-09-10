@@ -218,7 +218,7 @@ export default function StaffPage() {
     }
   }
 
-   const handleDeactivate = async (staffId) => {
+  const handleDeactivate = async (staffId) => {
     setDeactivating(true)
     try {
       await staffApi.update(staffId, { isActive: false })
