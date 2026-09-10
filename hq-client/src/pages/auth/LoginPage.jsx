@@ -45,7 +45,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className={styles.page}>
+    <main className={styles.page}>
       <div className={styles.card}>
 
         {/* Logo */}
@@ -105,7 +105,13 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 style={{ paddingRight: 44, appearance: 'none' }}
               />
-              <button type="button" className={styles.eyeBtn} onClick={() => setShowPw(v => !v)}>
+              <button
+                type="button"
+                className={styles.eyeBtn}
+                onClick={() => setShowPw(v => !v)}
+                aria-label={showPw ? 'Hide password' : 'Show password'}
+                aria-pressed={showPw}
+              >
                 {showPw ? <EyeOff /> : <EyeOn />}
               </button>
             </div>
@@ -138,6 +144,6 @@ export default function LoginPage() {
 
         <div className={styles.footer}>© 2026 HealthQueue+. All rights reserved.</div>
       </div>
-    </div>
+    </main>
   )
 }

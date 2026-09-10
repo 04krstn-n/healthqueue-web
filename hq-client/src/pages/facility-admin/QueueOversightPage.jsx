@@ -234,6 +234,7 @@ export default function QueueOversightPage() {
             style={{ width: 160 }}
             value={serviceFilter}
             onChange={(e) => setServiceFilter(e.target.value)}
+            aria-label="Filter by service"
           >
             {serviceNames.map((s) => (
               <option key={s} value={s}>
@@ -243,7 +244,7 @@ export default function QueueOversightPage() {
           </select>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--success)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--success-dk)' }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#16A34A', display: 'inline-block' }} />
           Live Updates · Last updated: {lastUpdated ? formatTime(lastUpdated) : '—'}
         </div>

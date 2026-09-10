@@ -1,31 +1,23 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { usersApi, clinicsApi } from '../../services/api'
 import styles from './super-admin.module.css'
-
+ 
 const ROLE_LABELS = {
   super_admin: 'System Administrator',
   facility_admin: 'Facility Admin',
   staff: 'Staff',
   patient: 'Patient',
 }
-
+ 
 const ROLE_BADGE = {
   super_admin: 'badge-purple',
   facility_admin: 'badge-blue',
   staff: 'badge-teal',
   patient: 'badge-green',
 }
-
+ 
 const CREATE_ROLES = ['facility_admin', 'staff', 'super_admin']
-
-const PERMISSIONS = {
-  'Patient Management': ['Patient Check-in', 'View Patient Records', 'Edit Patient Records'],
-  'Queue Management': ['View Queue', 'Manage Queue'],
-  'Staff Management': ['View Staff', 'Manage Staff'],
-  Analytics: ['View Reports', 'Export Reports'],
-  'System Settings': ['View Settings', 'Manage Settings'],
-}
-
+ 
 const PERM_OPTIONS = [
   'full-access',
   'queue-management',
@@ -40,13 +32,12 @@ const PERM_OPTIONS = [
   'settings-view',
   'settings-manage',
 ]
-
+ 
 const SYSTEM_ROLES = [
   {
     _id: '1',
     name: 'Facility Admin',
     type: 'system',
-    users: 24,
     desc: 'Full administrative access to facility operations',
     perms: ['full-access'],
   },
@@ -54,7 +45,6 @@ const SYSTEM_ROLES = [
     _id: '2',
     name: 'Staff',
     type: 'system',
-    users: 42,
     desc: 'Manage patient queues and flow',
     perms: ['queue-management', 'patient-view', 'reports-view'],
   },
@@ -62,12 +52,17 @@ const SYSTEM_ROLES = [
     _id: '3',
     name: 'System Admin',
     type: 'system',
-    users: 24,
     desc: 'Full administrative access to all operations',
     perms: ['full-access'],
   },
 ]
-
+ 
+const ROLE_NAME_TO_KEY = {
+  'Facility Admin': 'facility_admin',
+  Staff: 'staff',
+  'System Admin': 'super_admin',
+}
+ 
 const PERM_BADGE = {
   'full-access': 'badge-blue',
   'queue-management': 'badge-teal',
@@ -82,7 +77,7 @@ const PERM_BADGE = {
   'settings-view': 'badge-gray',
   'settings-manage': 'badge-gray',
 }
-
+ 
 const EMPTY_USER_FORM = {
   firstName: '',
   lastName: '',
@@ -90,67 +85,66 @@ const EMPTY_USER_FORM = {
   phone: '',
   role: 'facility_admin',
   clinicId: '',
-  permissions: [],
 }
-
+ 
 export default function UserManagementPage() {
   const [tab, setTab] = useState('list') // 'list' | 'create'
   const [listView, setListView] = useState('active') // 'active' | 'deactivated'
   const [toast, setToast] = useState('')
-
+ 
   const [users, setUsers] = useState([])
   const [clinics, setClinics] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState('all')
-
+ 
   const [userForm, setUserForm] = useState(EMPTY_USER_FORM)
   const [formErrors, setFormErrors] = useState({})
   const [savingUser, setSavingUser] = useState(false)
   const [userSuccess, setUserSuccess] = useState('')
   const [userError, setUserError] = useState('')
-
+ 
   const [assignModalUser, setAssignModalUser] = useState(null)
   const [assignClinicId, setAssignClinicId] = useState('')
   const [assigning, setAssigning] = useState(false)
   const [deactivateTarget, setDeactivateTarget] = useState(null)
   const [reactivateTarget, setReactivateTarget] = useState(null)
   const [reactivating, setReactivating] = useState(false)
-
+ 
   // Role Management State
   const [showRoleManager, setShowRoleManager] = useState(false)
-  const [customRoles, setCustomRoles] = useState([])
+  const [roles, setRoles] = useState(SYSTEM_ROLES)
   const [roleModal, setRoleModal] = useState(null) // null | 'create' | 'edit'
   const [editingRole, setEditingRole] = useState(null)
   const [roleForm, setRoleForm] = useState({ name: '', desc: '', perms: [] })
   const [roleError, setRoleError] = useState('')
-
+ 
   const toastTimerRef = useRef(null)
-
+ 
   const showToast = useCallback((msg) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     setToast(msg)
     toastTimerRef.current = setTimeout(() => setToast(''), 3000)
   }, [])
-
+ 
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     }
   }, [])
-
+ 
   useEffect(() => {
   if (!userSuccess) return
   const t = setTimeout(() => setUserSuccess(''), 4000)
   return () => clearTimeout(t)
 }, [userSuccess])
-
+ 
 useEffect(() => {
   if (!userError) return
   const t = setTimeout(() => setUserError(''), 4000)
   return () => clearTimeout(t)
 }, [userError])
-
+ 
   // ─── Data Loading ────────────────────────────────────────────────────────────
   const loadUsers = useCallback(async () => {
     setLoading(true)
@@ -163,7 +157,7 @@ useEffect(() => {
       setLoading(false)
     }
   }, [showToast])
-
+ 
   const loadClinics = useCallback(async () => {
     try {
       const res = await clinicsApi.list()
@@ -172,22 +166,13 @@ useEffect(() => {
       console.error('Failed to load clinics:', e)
     }
   }, [])
-
+ 
   useEffect(() => {
     loadUsers()
     loadClinics()
   }, [loadUsers, loadClinics])
-
+ 
   // ─── User Creation Handlers ──────────────────────────────────────────────────
-  const toggleUserPerm = (perm) => {
-    setUserForm((f) => ({
-      ...f,
-      permissions: f.permissions.includes(perm)
-        ? f.permissions.filter((p) => p !== perm)
-        : [...f.permissions, perm],
-    }))
-  }
-
   const handleCreateUser = async () => {
     const errors = {}
     if (!userForm.firstName.trim()) errors.firstName = 'First name is required'
@@ -196,18 +181,18 @@ useEffect(() => {
     if (userForm.role === 'facility_admin' && !userForm.clinicId) {
       errors.clinicId = 'Facility Admin must be assigned to a clinic.'
     }
-
+ 
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors)
       setUserError('Please resolve required fields.')
       return
     }
-
+ 
     setSavingUser(true)
     setUserError('')
     setUserSuccess('')
     setFormErrors({})
-
+ 
     try {
       await usersApi.create({
         fullName: `${userForm.firstName.trim()} ${userForm.lastName.trim()}`.trim(),
@@ -226,13 +211,13 @@ useEffect(() => {
       setSavingUser(false)
     }
   }
-
+ 
   // ─── Assign / Deactivate Handlers ────────────────────────────────────────────
   const openAssign = (u) => {
     setAssignModalUser(u)
     setAssignClinicId(u.clinicId?._id || u.clinicId || '')
   }
-
+ 
   const handleAssign = async () => {
     if (!assignModalUser) return
     setAssigning(true)
@@ -249,7 +234,7 @@ useEffect(() => {
       setAssigning(false)
     }
   }
-
+ 
   const handleDeactivate = async (u) => {
     try {
       await usersApi.deactivate(u._id)
@@ -260,7 +245,7 @@ useEffect(() => {
       showToast(e?.response?.data?.message || 'Failed to deactivate user.')
     }
   }
-
+ 
   const handleReactivate = async (u) => {
     setReactivating(true)
     try {
@@ -274,7 +259,7 @@ useEffect(() => {
       setReactivating(false)
     }
   }
-
+ 
   const getClinicDisplayName = useCallback(
     (u) => {
       const id = u.clinicId?._id || u.clinicId
@@ -284,30 +269,45 @@ useEffect(() => {
     },
     [clinics]
   )
-
+ 
   // ─── Custom Role Handlers ────────────────────────────────────────────────────
-  const allRoles = useMemo(() => [...SYSTEM_ROLES, ...customRoles], [customRoles])
-
+  const roleUserCounts = useMemo(() => {
+    const counts = {}
+    for (const key of Object.values(ROLE_NAME_TO_KEY)) {
+      counts[key] = users.filter((u) => u.role === key).length
+    }
+    return counts
+  }, [users])
+ 
+  const allRoles = useMemo(
+    () =>
+      roles.map((r) => ({
+        ...r,
+        users: ROLE_NAME_TO_KEY[r.name] != null ? roleUserCounts[ROLE_NAME_TO_KEY[r.name]] || 0 : r.users || 0,
+      })),
+    [roles, roleUserCounts]
+  )
+ 
   const openCreateRole = () => {
     setEditingRole(null)
     setRoleForm({ name: '', desc: '', perms: [] })
     setRoleError('')
     setRoleModal('create')
   }
-
+ 
   const openEditRole = (r) => {
     setEditingRole(r)
     setRoleForm({ name: r.name, desc: r.desc, perms: [...r.perms] })
     setRoleError('')
     setRoleModal('edit')
   }
-
+ 
   const closeRoleModal = () => {
     setRoleModal(null)
     setEditingRole(null)
     setRoleError('')
   }
-
+ 
   const toggleRolePerm = (perm) => {
     setRoleForm((prev) => ({
       ...prev,
@@ -316,48 +316,43 @@ useEffect(() => {
         : [...prev.perms, perm],
     }))
   }
-
+ 
   const saveRole = () => {
     if (!roleForm.name.trim()) {
       setRoleError('Role name is required')
       return
     }
-
-    if (roleModal === 'edit' && editingRole?.type === 'system') {
-      showToast('System roles cannot be modified')
-      return
-    }
-
+ 
     if (roleModal === 'edit') {
-      setCustomRoles((prev) =>
+      setRoles((prev) =>
         prev.map((r) => (r._id === editingRole._id ? { ...r, ...roleForm } : r))
       )
       showToast('Role updated')
     } else {
-      setCustomRoles((prev) => [
+      setRoles((prev) => [
         ...prev,
-        { _id: String(Date.now()), type: 'custom', users: 0, ...roleForm },
+        { _id: String(Date.now()), type: 'custom', ...roleForm },
       ])
       showToast('Role created successfully')
     }
     closeRoleModal()
   }
-
+ 
   const duplicateRole = (r) => {
-    setCustomRoles((prev) => [
+    setRoles((prev) => [
       ...prev,
-      { ...r, _id: String(Date.now()), name: `${r.name} (Copy)`, type: 'custom', users: 0 },
+      { ...r, _id: String(Date.now()), name: `${r.name} (Copy)`, type: 'custom' },
     ])
     showToast(`"${r.name}" duplicated`)
   }
-
+ 
   const removeRole = (e, id) => {
     e.stopPropagation()
     if (!window.confirm('Delete this custom role? This cannot be undone.')) return
-    setCustomRoles((prev) => prev.filter((r) => r._id !== id))
+    setRoles((prev) => prev.filter((r) => r._id !== id))
     showToast('Role deleted')
   }
-
+ 
   // ─── Memoized Selectors ───────────────────────────────────────────────────────
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -371,7 +366,7 @@ useEffect(() => {
       return matchView && matchRole && matchSearch
     })
   }, [users, search, roleFilter, listView])
-
+ 
   const userStats = useMemo(() => {
     return {
       total: users.length,
@@ -383,11 +378,11 @@ useEffect(() => {
       unassignedAdmins: users.filter((u) => u.role === 'facility_admin' && !u.clinicId).length,
     }
   }, [users])
-
+ 
   return (
     <div className={styles.page}>
       {toast && <div className={styles.toast}>{toast}</div>}
-
+ 
       {/* Header */}
       <div className={styles.header}>
         <div>
@@ -405,7 +400,7 @@ useEffect(() => {
           Manage Roles & Permissions
         </button>
       </div>
-
+ 
       {/* Navigation Tabs */}
       <div className={styles.pageTabs}>
         <button
@@ -435,7 +430,7 @@ useEffect(() => {
           Create New User
         </button>
       </div>
-
+ 
       {/* ── 1. USER LIST TAB ── */}
       {tab === 'list' && (
         <>
@@ -468,7 +463,7 @@ useEffect(() => {
               </span>
             </div>
           )}
-
+ 
           {/* Active / Deactivated View Toggle */}
           <div
             style={{
@@ -503,7 +498,7 @@ useEffect(() => {
               </button>
             ))}
           </div>
-
+ 
           <div className="card">
             {/* Toolbar */}
             <div className={styles.toolbar}>
@@ -533,7 +528,7 @@ useEffect(() => {
                 Refresh
               </button>
             </div>
-
+ 
             {/* Quick Metrics */}
             <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
               {[
@@ -559,7 +554,7 @@ useEffect(() => {
                 </div>
               ))}
             </div>
-
+ 
             {/* Table */}
             <div className="table-wrap" style={{ border: 'none', borderRadius: 0 }}>
               <table>
@@ -636,7 +631,7 @@ useEffect(() => {
                             {u.isActive ? (
                               <button
                                 className="btn btn-sm"
-                                style={{ background: 'var(--error-lt)', color: 'var(--error)', border: 'none' }}
+                                style={{ background: 'var(--error-lt)', color: 'var(--error-dk)', border: 'none' }}
                                 onClick={() => setDeactivateTarget(u)}
                               >
                                 Deactivate
@@ -657,195 +652,179 @@ useEffect(() => {
           </div>
         </>
       )}
-
+ 
       {/* ── 2. CREATE USER TAB ── */}
       {tab === 'create' && (
         <div style={{ maxWidth: 640, margin: '0 auto' }}>
-          <div className={`card ${styles.banner}`}>
-            <div className={styles.bannerIcon}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <line x1="19" y1="8" x2="19" y2="14" />
-                <line x1="22" y1="11" x2="16" y2="11" />
-              </svg>
-            </div>
-            <div>
-              <div className={styles.bannerTitle}>Create New User</div>
-              <div className={styles.bannerSub}>
-                Add a new user to the HealthQueue+ system. Default password: <strong>HealthQueue@2025</strong>
+          <div className="card">
+            <div className={styles.banner}>
+              <div className={styles.bannerIcon}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <line x1="19" y1="8" x2="19" y2="14" />
+                  <line x1="22" y1="11" x2="16" y2="11" />
+                </svg>
               </div>
-            </div>
-          </div>
-
-          {userSuccess && <div className="alert alert-success">{userSuccess}</div>}
-          {userError && <div className="alert alert-error">{userError}</div>}
-
-          <div className={`card ${styles.section}`}>
-            <div className={styles.sectionTitle}>Personal Information</div>
-            <div className={styles.formGrid2}>
-              <div className="form-group">
-                <label className="form-label">
-                  First Name <span className={styles.req}>*</span>
-                </label>
-                <input
-                  className="form-input"
-                  placeholder="First name"
-                  value={userForm.firstName}
-                  style={{ border: formErrors.firstName ? '1px solid #DC2626' : undefined }}
-                  onChange={(e) => {
-                    setUserForm((f) => ({ ...f, firstName: e.target.value }))
-                    if (formErrors.firstName) setFormErrors((f) => ({ ...f, firstName: '' }))
-                  }}
-                />
-                {formErrors.firstName && (
-                  <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
-                    {formErrors.firstName}
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Last Name</label>
-                <input
-                  className="form-input"
-                  placeholder="Last name"
-                  value={userForm.lastName}
-                  onChange={(e) => setUserForm((f) => ({ ...f, lastName: e.target.value }))}
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">
-                  Email Address <span className={styles.req}>*</span>
-                </label>
-                <input
-                  className="form-input"
-                  type="email"
-                  placeholder="user@example.com"
-                  value={userForm.email}
-                  style={{ border: formErrors.email ? '1px solid #DC2626' : undefined }}
-                  onChange={(e) => {
-                    setUserForm((f) => ({ ...f, email: e.target.value }))
-                    if (formErrors.email) setFormErrors((f) => ({ ...f, email: '' }))
-                  }}
-                />
-                {formErrors.email && (
-                  <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
-                    {formErrors.email}
-                  </div>
-                )}
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Phone Number</label>
-                <input
-                  className="form-input"
-                  placeholder="09XXXXXXXXX"
-                  value={userForm.phone}
-                 onChange={(e) => { const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
-                   setUserForm((f) => ({ ...f, phone: digitsOnly })) }}
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className={`card ${styles.section}`}>
-            <div className={styles.sectionTitle}>Account Information</div>
-            <div className={styles.formGrid2}>
-              <div className="form-group">
-                <label className="form-label">
-                  Role <span className={styles.req}>*</span>
-                </label>
-                <select
-                  className="form-select"
-                  value={userForm.role}
-                  onChange={(e) => setUserForm((f) => ({ ...f, role: e.target.value, clinicId: '' }))}
-                >
-                  {CREATE_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {ROLE_LABELS[r] || r}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">
-                  Assign Clinic
-                  {userForm.role === 'facility_admin' && <span className={styles.req}> *</span>}
-                </label>
-                <select
-                  className="form-select"
-                  value={userForm.clinicId}
-                  style={{ border: formErrors.clinicId ? '1px solid #DC2626' : undefined }}
-                  onChange={(e) => {
-                    setUserForm((f) => ({ ...f, clinicId: e.target.value }))
-                    if (formErrors.clinicId) setFormErrors((f) => ({ ...f, clinicId: '' }))
-                  }}
-                >
-                  <option value="">
-                    {userForm.role === 'facility_admin' ? '— Select clinic (required) —' : '— None —'}
-                  </option>
-                  {clinics.map((cl) => (
-                    <option key={cl._id} value={cl._id}>
-                      {cl.name.replace('Hi-Precision Diagnostics - ', '')}
-                    </option>
-                  ))}
-                </select>
-                {userForm.role === 'facility_admin' && !userForm.clinicId && (
-                  <div style={{ fontSize: 11, color: '#D97706', marginTop: 4 }}>
-                    Facility Admin must be assigned to a clinic.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className={`card ${styles.section}`}>
-            <div className={styles.sectionTitle}>Permissions</div>
-            {Object.entries(PERMISSIONS).map(([group, perms]) => (
-              <div key={group} className={styles.permGroup}>
-                <div className={styles.permGroupTitle}>{group}</div>
-                <div className={styles.permGrid}>
-                  {perms.map((p) => (
-                    <label key={p} className={styles.permItem}>
-                      <input
-                        type="checkbox"
-                        checked={userForm.permissions.includes(p)}
-                        onChange={() => toggleUserPerm(p)}
-                        className={styles.permCheck}
-                      />
-                      <span className={styles.permLabel}>{p}</span>
-                    </label>
-                  ))}
+              <div>
+                <div className={styles.bannerTitle}>Create New User</div>
+                <div className={styles.bannerSub}>
+                  Add a new user to the HealthQueue+ system. Default password: <strong>HealthQueue@2025</strong>
                 </div>
               </div>
-            ))}
-          </div>
-
-          <div className={styles.actions}>
-            <button
-              className="btn btn-outline"
-              onClick={() => {
-                setUserForm(EMPTY_USER_FORM)
-                setFormErrors({})
-                setUserError('')
-                setUserSuccess('')
-              }}
-            >
-              Clear
-            </button>
-            <button className="btn btn-outline" onClick={() => setTab('list')}>
-              Back to List
-            </button>
-            <button className="btn btn-primary" onClick={handleCreateUser} disabled={savingUser}>
-              {savingUser ? 'Creating…' : 'Create User'}
-            </button>
+            </div>
+ 
+            {(userSuccess || userError) && (
+              <div style={{ padding: '20px 24px 0' }}>
+                {userSuccess && <div className="alert alert-success">{userSuccess}</div>}
+                {userError && <div className="alert alert-error">{userError}</div>}
+              </div>
+            )}
+ 
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Personal Information</div>
+              <div className={styles.formGrid2}>
+                <div className="form-group">
+                  <label className="form-label">
+                    First Name <span className={styles.req}>*</span>
+                  </label>
+                  <input
+                    className="form-input"
+                    placeholder="First name"
+                    value={userForm.firstName}
+                    style={{ border: formErrors.firstName ? '1px solid #DC2626' : undefined }}
+                    onChange={(e) => {
+                      setUserForm((f) => ({ ...f, firstName: e.target.value }))
+                      if (formErrors.firstName) setFormErrors((f) => ({ ...f, firstName: '' }))
+                    }}
+                  />
+                  {formErrors.firstName && (
+                    <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
+                      {formErrors.firstName}
+                    </div>
+                  )}
+                </div>
+ 
+                <div className="form-group">
+                  <label className="form-label">Last Name</label>
+                  <input
+                    className="form-input"
+                    placeholder="Last name"
+                    value={userForm.lastName}
+                    onChange={(e) => setUserForm((f) => ({ ...f, lastName: e.target.value }))}
+                  />
+                </div>
+ 
+                <div className="form-group">
+                  <label className="form-label">
+                    Email Address <span className={styles.req}>*</span>
+                  </label>
+                  <input
+                    className="form-input"
+                    type="email"
+                    placeholder="user@example.com"
+                    value={userForm.email}
+                    style={{ border: formErrors.email ? '1px solid #DC2626' : undefined }}
+                    onChange={(e) => {
+                      setUserForm((f) => ({ ...f, email: e.target.value }))
+                      if (formErrors.email) setFormErrors((f) => ({ ...f, email: '' }))
+                    }}
+                  />
+                  {formErrors.email && (
+                    <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
+                      {formErrors.email}
+                    </div>
+                  )}
+                </div>
+ 
+                <div className="form-group">
+                  <label className="form-label">Phone Number</label>
+                  <input
+                    className="form-input"
+                    placeholder="09XXXXXXXXX"
+                    value={userForm.phone}
+                   onChange={(e) => { const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
+                     setUserForm((f) => ({ ...f, phone: digitsOnly })) }}
+                  />
+                </div>
+              </div>
+            </div>
+ 
+            <div className={styles.section}>
+              <div className={styles.sectionTitle}>Account Information</div>
+              <div className={styles.formGrid2}>
+                <div className="form-group">
+                  <label className="form-label">
+                    Role <span className={styles.req}>*</span>
+                  </label>
+                  <select
+                    className="form-select"
+                    value={userForm.role}
+                    onChange={(e) => setUserForm((f) => ({ ...f, role: e.target.value, clinicId: '' }))}
+                  >
+                    {CREATE_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABELS[r] || r}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+ 
+                <div className="form-group">
+                  <label className="form-label">
+                    Assign Clinic
+                    {userForm.role === 'facility_admin' && <span className={styles.req}> *</span>}
+                  </label>
+                  <select
+                    className="form-select"
+                    value={userForm.clinicId}
+                    style={{ border: formErrors.clinicId ? '1px solid #DC2626' : undefined }}
+                    onChange={(e) => {
+                      setUserForm((f) => ({ ...f, clinicId: e.target.value }))
+                      if (formErrors.clinicId) setFormErrors((f) => ({ ...f, clinicId: '' }))
+                    }}
+                  >
+                    <option value="">
+                      {userForm.role === 'facility_admin' ? '— Select clinic (required) —' : '— None —'}
+                    </option>
+                    {clinics.map((cl) => (
+                      <option key={cl._id} value={cl._id}>
+                        {cl.name.replace('Hi-Precision Diagnostics - ', '')}
+                      </option>
+                    ))}
+                  </select>
+                  {userForm.role === 'facility_admin' && !userForm.clinicId && (
+                    <div style={{ fontSize: 11, color: '#D97706', marginTop: 4 }}>
+                      Facility Admin must be assigned to a clinic.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+ 
+            <div className={styles.actions} style={{ padding: '0 24px 20px' }}>
+              <button
+                className="btn btn-outline"
+                onClick={() => {
+                  setUserForm(EMPTY_USER_FORM)
+                  setFormErrors({})
+                  setUserError('')
+                  setUserSuccess('')
+                }}
+              >
+                Clear
+              </button>
+              <button className="btn btn-outline" onClick={() => setTab('list')}>
+                Back to List
+              </button>
+              <button className="btn btn-primary" onClick={handleCreateUser} disabled={savingUser}>
+                {savingUser ? 'Creating…' : 'Create User'}
+              </button>
+            </div>
           </div>
         </div>
       )}
-
+ 
       {/* ── ROLE MANAGEMENT DIRECTORY MODAL ── */}
       {showRoleManager && (
         <div className="modal-overlay" onClick={() => setShowRoleManager(false)}>
@@ -865,7 +844,7 @@ useEffect(() => {
                 ✕
               </button>
             </div>
-
+ 
             <div className="modal-body" style={{ overflowY: 'auto', flex: 1, padding: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
                 <button className="btn btn-primary btn-sm" onClick={openCreateRole}>
@@ -876,7 +855,7 @@ useEffect(() => {
                   Create Custom Role
                 </button>
               </div>
-
+ 
               <div className={styles.rolesGrid}>
                 {allRoles.map((role) => (
                   <div key={role._id} className={`card ${styles.roleCard}`}>
@@ -896,9 +875,9 @@ useEffect(() => {
                         </span>
                       </div>
                     </div>
-
+ 
                     <div className={styles.roleDesc}>{role.desc}</div>
-
+ 
                     <div className={styles.roleUsers}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -908,7 +887,7 @@ useEffect(() => {
                       </svg>
                       {role.users} users
                     </div>
-
+ 
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-2)', marginTop: 8 }}>
                       Permissions:
                     </div>
@@ -924,7 +903,7 @@ useEffect(() => {
                         </span>
                       )}
                     </div>
-
+ 
                     <div className={styles.roleActions} style={{ marginTop: 12 }}>
                       <button className={styles.actBtn} onClick={() => openEditRole(role)}>
                         Edit
@@ -948,7 +927,7 @@ useEffect(() => {
           </div>
         </div>
       )}
-
+ 
       {/* ── CREATE / EDIT ROLE MODAL ── */}
       {roleModal && (
         <div className="modal-overlay" onClick={closeRoleModal}>
@@ -960,22 +939,6 @@ useEffect(() => {
               </button>
             </div>
             <div className="modal-body">
-              {roleModal === 'edit' && editingRole?.type === 'system' && (
-                <div
-                  style={{
-                    padding: '10px 14px',
-                    background: '#FFF7ED',
-                    borderRadius: 8,
-                    fontSize: 12,
-                    color: '#92400E',
-                    marginBottom: 16,
-                    borderLeft: '3px solid #D97706',
-                  }}
-                >
-                  System roles are read-only. Duplicate this role to create a custom variant.
-                </div>
-              )}
-
               <div className="form-group">
                 <label className="form-label">Role Name *</label>
                 <input
@@ -987,7 +950,6 @@ useEffect(() => {
                     if (roleError) setRoleError('')
                   }}
                   placeholder="e.g. Laboratory Supervisor"
-                  disabled={roleModal === 'edit' && editingRole?.type === 'system'}
                 />
                 {roleError && (
                   <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
@@ -995,7 +957,7 @@ useEffect(() => {
                   </div>
                 )}
               </div>
-
+ 
               <div className="form-group">
                 <label className="form-label">Description</label>
                 <input
@@ -1003,29 +965,25 @@ useEffect(() => {
                   value={roleForm.desc}
                   onChange={(e) => setRoleForm((f) => ({ ...f, desc: e.target.value }))}
                   placeholder="Describe what this role can do"
-                  disabled={roleModal === 'edit' && editingRole?.type === 'system'}
                 />
               </div>
-
+ 
               <div className="form-group">
                 <label className="form-label">Permissions</label>
                 <div className={styles.permGrid}>
                   {PERM_OPTIONS.map((p) => {
                     const isChecked = roleForm.perms.includes(p)
-                    const isDisabled = roleModal === 'edit' && editingRole?.type === 'system'
-
+ 
                     return (
                       <label
                         key={p}
                         className={`${styles.permCheck2} ${isChecked ? styles.permChecked : ''}`}
-                        style={{ cursor: isDisabled ? 'not-allowed' : 'pointer' }}
                       >
                         <input
                           type="checkbox"
                           checked={isChecked}
-                          onChange={() => !isDisabled && toggleRolePerm(p)}
+                          onChange={() => toggleRolePerm(p)}
                           style={{ display: 'none' }}
-                          disabled={isDisabled}
                         />
                         <span className={styles.permCheckBox}>
                           {isChecked && (
@@ -1045,26 +1003,14 @@ useEffect(() => {
               <button className="btn btn-outline" onClick={closeRoleModal}>
                 Cancel
               </button>
-              {!(roleModal === 'edit' && editingRole?.type === 'system') ? (
-                <button className="btn btn-primary" onClick={saveRole}>
-                  {roleModal === 'edit' ? 'Save Changes' : 'Create Role'}
-                </button>
-              ) : (
-                <button
-                  className="btn btn-primary"
-                  onClick={() => {
-                    duplicateRole(editingRole)
-                    closeRoleModal()
-                  }}
-                >
-                  Duplicate & Customize
-                </button>
-              )}
+              <button className="btn btn-primary" onClick={saveRole}>
+                {roleModal === 'edit' ? 'Save Changes' : 'Create Role'}
+              </button>
             </div>
           </div>
         </div>
       )}
-
+ 
       {/* ── ASSIGN CLINIC MODAL ── */}
       {assignModalUser && (
         <div className="modal-overlay" onClick={() => setAssignModalUser(null)}>
@@ -1109,7 +1055,7 @@ useEffect(() => {
           </div>
         </div>
       )}
-
+ 
       {/* ── DEACTIVATE CONFIRMATION MODAL ── */}
       {deactivateTarget && (
         <div className="modal-overlay" onClick={() => setDeactivateTarget(null)}>
@@ -1148,7 +1094,7 @@ useEffect(() => {
           </div>
         </div>
       )}
-
+ 
       {/* ── REACTIVATE CONFIRMATION MODAL ── */}
       {reactivateTarget && (
         <div className="modal-overlay" onClick={() => setReactivateTarget(null)}>

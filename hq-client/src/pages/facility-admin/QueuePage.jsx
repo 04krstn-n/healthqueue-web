@@ -341,6 +341,7 @@ export default function QueueAndAppointmentsPage() {
               style={{ width: 140 }}
               value={qStatus}
               onChange={(e) => setQStatus(e.target.value)}
+              aria-label="Filter queue by status"
             >
               {['All', 'Waiting', 'Serving', 'Done', 'Completed', 'Cancelled', 'No Show'].map((status) => (
                 <option key={status} value={status}>
@@ -460,6 +461,7 @@ export default function QueueAndAppointmentsPage() {
                 style={{ width: 150 }}
                 value={aStatus}
                 onChange={(e) => setAStatus(e.target.value)}
+                aria-label="Filter appointments by status"
               >
                 <option value="All">All Status</option>
                 {APPT_STATUSES.map((status) => (

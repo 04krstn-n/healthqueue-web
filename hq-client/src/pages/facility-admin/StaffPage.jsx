@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
 import { staffApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import styles from './facility-admin.module.css'
@@ -418,6 +418,7 @@ export default function StaffPage() {
             style={{ width: 200, flexShrink: 0 }}
             value={specFilter}
             onChange={(e) => setSpecFilter(e.target.value)}
+            aria-label="Filter by specialization"
           >
             <option value="All">All Specializations</option>
             {SPECIALIZATION_OPTIONS.map((opt) => (
@@ -725,10 +726,11 @@ function FormField({ label, type = 'text', inputMode, maxLength, value, error, o
 }
 
 function SelectField({ label, value, options, onChange }) {
+  const id = useId()
   return (
     <div className="form-group">
-      <label className="form-label">{label}</label>
-      <select className="form-select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select id={id} className="form-select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => (
           <option key={o.value ?? o} value={o.value ?? o}>
             {o.label ?? o}

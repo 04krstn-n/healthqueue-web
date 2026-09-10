@@ -74,7 +74,7 @@
 .alertTime { font-size: 11px; color: var(--muted-lt); margin-top: 2px; }
 
 /* ── UsersPage form ────────────────────────────────────────────── */
-.banner      { display: flex; align-items: center; gap: 16px; padding: 20px 24px; }
+.banner      { display: flex; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border-lt); }
 .bannerIcon  { width: 48px; height: 48px; border-radius: 12px; background: #EFF6FF; color: var(--primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .bannerTitle { font-size: 16px; font-weight: 700; color: var(--text); }
 .bannerSub   { font-size: 13px; color: var(--muted); margin-top: 2px; }
@@ -105,7 +105,7 @@
 .actBtn      { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 0; border: none; border-right: 1px solid var(--border-lt); background: transparent; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-2); transition: all .15s; border-radius: 0; }
 .actBtn:hover      { background: var(--border-lt); color: var(--primary); }
 .actBtn:last-child { border-right: none; }
-.actDel:hover      { color: var(--error) !important; background: var(--error-lt) !important; flex: 0; padding: 7px 12px; }
+.actDel:hover      { color: var(--error-dk) !important; background: var(--error-lt) !important; flex: 0; padding: 7px 12px; }
 .permCheck2        { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text-2); transition: all .15s; }
 .permCheck2:hover  { border-color: var(--primary); background: #EFF6FF; }
 .permChecked       { border-color: var(--primary); background: #EFF6FF; color: var(--primary); }

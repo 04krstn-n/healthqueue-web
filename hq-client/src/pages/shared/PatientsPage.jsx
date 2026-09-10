@@ -364,6 +364,7 @@ export default function PatientsPage() {
               setTypeFilter(e.target.value)
               setPage(1)
             }}
+            aria-label="Filter patients by type"
           >
             {TYPES.map((t) => (
               <option key={t} value={t}>

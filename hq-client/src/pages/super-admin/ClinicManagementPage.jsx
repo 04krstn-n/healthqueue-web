@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
 import { clinicsApi } from '../../services/api'
 import styles from './super-admin.module.css'
 
@@ -242,6 +242,7 @@ export default function ClinicManagementPage() {
             style={{ width: 130 }}
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
+            aria-label="Filter clinics by status"
           >
             <option value="all">All Status</option>
             <option value="open">Open</option>
@@ -348,7 +349,7 @@ export default function ClinicManagementPage() {
                     flex: 0,
                     fontSize: 12,
                     padding: '6px 50px',
-                    color: 'var(--error)',
+                    color: 'var(--error-dk)',
                     background: 'var(--error-lt)',
                     border: 'none',
                   }}
@@ -634,10 +635,11 @@ function Toggle({ value, onChange }) {
 }
 
 function SelectField({ label, value, options, onChange }) {
+  const id = useId()
   return (
     <div className="form-group">
-      <label className="form-label">{label}</label>
-      <select className="form-select" value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select id={id} className="form-select" value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => {
           const optValue = typeof o === 'string' ? o : o.value
           const optLabel = typeof o === 'string' ? o : o.label

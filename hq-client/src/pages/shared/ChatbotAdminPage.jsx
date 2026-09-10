@@ -356,6 +356,7 @@ export default function ChatbotAdminPage() {
               className="dropdown-select"
               value={catFilter}
               onChange={(e) => setCatFilter(e.target.value)}
+              aria-label="Filter by category"
             >
               <option value="All">All Categories</option>
               {CATEGORIES.map((c) => (

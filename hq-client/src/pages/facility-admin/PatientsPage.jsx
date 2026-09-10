@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useId } from 'react'
 import { patientsApi } from '../../services/api'
 import styles from './facility-admin.module.css'
 
@@ -332,6 +332,7 @@ export default function PatientsPage() {
               setTypeFilter(e.target.value)
               setPage(1)
             }}
+            aria-label="Filter patients by type"
           >
             {FILTER_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -758,10 +759,11 @@ function FormField({ label, type = 'text', value, error, onChange }) {
 }
 
 function SelectField({ label, value, options, onChange }) {
+  const id = useId()
   return (
     <div className="form-group">
-      <label className="form-label">{label}</label>
-      <select className="form-select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select id={id} className="form-select" value={value || ''} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => (
           <option key={o} value={o}>
             {o || '— select —'}
