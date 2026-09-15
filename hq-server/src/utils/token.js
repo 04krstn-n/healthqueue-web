@@ -20,7 +20,7 @@ const signToken = (user) => {
       clinicId: user.clinicId || null 
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN || '7d' }
+    { expiresIn: JWT_EXPIRES_IN || '1d' }
   );
 };
 

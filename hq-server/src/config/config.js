@@ -32,15 +32,15 @@ if (isProd && !process.env.FRONTEND_ORIGINS) {
 const env = {
   PORT: parseInt(process.env.PORT || '4000', 10),
   NODE_ENV,
-  MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/pfg_hqdb',
-  JWT_SECRET: process.env.JWT_SECRET || 'dev-only-insecure-secret-do-not-use-in-production',
-  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '30d',
+  MONGO_URI: process.env.MONGO_URI,
+  JWT_SECRET: process.env.JWT_SECRET,
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '1d',
 
   // Integrations & Keys
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   SEMAPHORE_API_KEY: process.env.SEMAPHORE_API_KEY,
-  SEMAPHORE_SENDER_NAME: process.env.SEMAPHORE_SENDER_NAME || 'HealthQ',
-  RASA_SERVER_URL: process.env.RASA_SERVER_URL || 'http://localhost:5005',
+  SEMAPHORE_SENDER_NAME: process.env.SEMAPHORE_SENDER_NAME,
+  RASA_SERVER_URL: process.env.RASA_SERVER_URL,
   GOOGLE_MAPS_API_KEY: process.env.GOOGLE_MAPS_API_KEY,
 
   // CORS Security — no wildcard fallback. In dev, default to the local

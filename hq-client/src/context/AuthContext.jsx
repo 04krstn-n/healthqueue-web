@@ -9,8 +9,8 @@ export function AuthProvider({ children }) {
 
   // Restore session on mount — verify token is still valid
   useEffect(() => {
-    const token  = localStorage.getItem('hq_token')
-    const cached = localStorage.getItem('hq_user')
+    const token  = sessionStorage.getItem('hq_token')
+    const cached = sessionStorage.getItem('hq_user')
 
     if (!token) {
       setLoading(false)
@@ -25,15 +25,15 @@ export function AuthProvider({ children }) {
     authApi.me()
       .then((res) => {
         setUser(res.data.user)
-        localStorage.setItem('hq_user', JSON.stringify(res.data.user))
+        sessionStorage.setItem('hq_user', JSON.stringify(res.data.user))
       })
       .catch((err) => {
         // Only clear session on explicit 401 (invalid/expired token)
         // Network errors or 5xx should NOT log the user out
         const status = err?.response?.status
         if (status === 401) {
-          localStorage.removeItem('hq_token')
-          localStorage.removeItem('hq_user')
+          sessionStorage.removeItem('hq_token')
+          sessionStorage.removeItem('hq_user')
           setUser(null)
         }
         // Otherwise keep the cached user — server may be temporarily unavailable
@@ -50,8 +50,8 @@ export function AuthProvider({ children }) {
       throw new Error('Access denied. This portal is for System Administrator or Facility Admin only.')
     }
 
-    localStorage.setItem('hq_token', token)
-    localStorage.setItem('hq_user', JSON.stringify(u))
+    sessionStorage.setItem('hq_token', token)
+    sessionStorage.setItem('hq_user', JSON.stringify(u))
     setUser(u)
     setLoading(false)   // ensure loading is false so ProtectedRoute lets us through
     return u
@@ -66,8 +66,8 @@ export function AuthProvider({ children }) {
     } catch (_) {
       // Ignore — clearing local session below is what actually logs the user out.
     }
-    localStorage.removeItem('hq_token')
-    localStorage.removeItem('hq_user')
+    sessionStorage.removeItem('hq_token')
+    sessionStorage.removeItem('hq_user')
     setUser(null)
   }
 
