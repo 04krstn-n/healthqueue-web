@@ -514,9 +514,22 @@ const replyToThread = async (req, res) => {
       // Live-updates the patient's OWN chat screen immediately if they
       // currently have it open — separate from the push notification
       // below, which is what reaches them if they don't.
+      //
+      // Fields must match what AppState's socket listener actually reads
+      // (see app_state.dart's `_connectUserSocket` — it branches on
+      // `data.containsKey('text') && data.containsKey('staffName')` to
+      // recognize this event). This was previously sending `reply`
+      // instead of `text`, and never sent `staffName` at all — so that
+      // condition was never true and a live-open chat screen silently
+      // never showed the staff's reply; the patient would only see it
+      // after closing and reopening the chat (which reloads via GET
+      // /chatbot/history). `reply` is kept alongside `text` in case any
+      // other consumer already relies on that field name.
       io.to(`user_${patientId}`).emit('staff_chat_reply', {
         logId: log._id,
+        text: replyText,
         reply: replyText,
+        staffName: req.user?.fullName || 'Clinic Staff',
         createdAt: log.createdAt,
       });
     }
