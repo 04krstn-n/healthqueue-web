@@ -26,6 +26,10 @@ const PendingRegistrationSchema = new mongoose.Schema({
   gender:      { type: String, default: '' },
   otp:         { type: String, default: null },
   otpExpires:  { type: Date, default: null },
+  // Server-side brute-force guard for verifyOTP — see MAX_OTP_ATTEMPTS in
+  // authController.js. Reset to 0 whenever a fresh OTP is issued (register
+  // upsert or resendOTP), since a new code deserves a fresh set of tries.
+  otpAttempts: { type: Number, default: 0 },
   createdAt:   { type: Date, default: Date.now },
 });
 

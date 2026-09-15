@@ -97,3 +97,22 @@
 .hq-landing section[id] {
   scroll-margin-top: 4.5rem;
 }
+
+/* Reset native button appearance for landing page only */
+.hq-landing button {
+  border: none;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.hq-landing button:focus {
+  outline: none;
+}
+
+/* Optional: accessible focus ring instead of harsh browser outline */
+.hq-landing button:focus-visible {
+  outline: 2px solid rgba(26, 111, 168, 0.5);
+  outline-offset: 2px;
+}

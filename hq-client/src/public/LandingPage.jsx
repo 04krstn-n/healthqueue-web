@@ -1,70 +1,16 @@
 import { useState } from 'react'
+import TermsAndAgreements from '../components/legal/TermsAndAgreements'
+import PrivacyPolicy from '../components/legal/PrivacyPolicy'
+import '../components/legal/policy.css'
 import logo from '../../src/assets/img/hq_logo.png'
-
+import background from '../../src/assets/img/landing_background.png'
+import stepJoinRemotely from '../../src/assets/img/join_remotely.jpg'
+import stepSeeWait from '../../src/assets/img/see_wait.jpg'
+import stepGetNotified from '../../src/assets/img/notified.jpg'
+import stepWalkIn from '../../src/assets/img/walkin.jpg'
+import qrCode from '../../src/assets/img/mobile_phone_qr.png'
 import './landingpage.css'
 
-const BRANCHES = [
-  {
-    name: 'HealthQueue+ Marikina',
-    city: 'Marikina City',
-    address: '12 Sumulong Highway, Marikina City',
-    phone: '(02) 8520-1234',
-    img: 'https://images.unsplash.com/photo-1580615631392-aeb060d526e4?w=600&h=400&fit=crop&auto=format',
-    alt: 'Marikina health center building',
-    status: 'Open',
-    queue: 14,
-  },
-  {
-    name: 'HealthQueue+ Caloocan',
-    city: 'Caloocan City',
-    address: '8 A. Mabini St., Caloocan City',
-    phone: '(02) 8364-5678',
-    img: 'https://images.unsplash.com/photo-1615770922480-0b9ae80afeba?w=600&h=400&fit=crop&auto=format',
-    alt: 'Caloocan health center building',
-    status: 'Open',
-    queue: 7,
-  },
-  {
-    name: 'HealthQueue+ Quezon City',
-    city: 'Quezon City',
-    address: '55 Batangas St., Quezon City',
-    phone: '(02) 8921-9000',
-    img: 'https://images.unsplash.com/photo-1607838720191-0d8eba3e9040?w=600&h=400&fit=crop&auto=format',
-    alt: 'Quezon City health center building',
-    status: 'Open',
-    queue: 23,
-  },
-  {
-    name: 'HealthQueue+ Taguig',
-    city: 'Taguig City',
-    address: '3 Market Ave., BGC, Taguig',
-    phone: '(02) 8789-3000',
-    img: 'https://images.unsplash.com/photo-1764885517847-79d62138cc58?w=600&h=400&fit=crop&auto=format',
-    alt: 'Taguig health center building',
-    status: 'Open',
-    queue: 5,
-  },
-  {
-    name: 'HealthQueue+ Pasig',
-    city: 'Pasig City',
-    address: 'Ortigas Ave., Pasig City',
-    phone: '(02) 8635-6789',
-    img: 'https://images.unsplash.com/photo-1769698678497-c41f0ab47c3e?w=600&h=400&fit=crop&auto=format',
-    alt: 'Pasig health center building',
-    status: 'Busy',
-    queue: 41,
-  },
-  {
-    name: 'HealthQueue+ Parañaque',
-    city: 'Parañaque City',
-    address: '101 Dr. A. Santos Ave., Parañaque',
-    phone: '(02) 8826-1100',
-    img: 'https://images.unsplash.com/photo-1769147555720-71fc71bfc216?w=600&h=400&fit=crop&auto=format',
-    alt: 'Paranaque health center building',
-    status: 'Open',
-    queue: 18,
-  },
-]
 
 const CORE_FEATURES = [
   {
@@ -122,48 +68,16 @@ const CORE_FEATURES = [
   },
 ]
 
-function QRCode() {
-  return (
-    <svg viewBox="0 0 21 21" className="w-48 h-48" shapeRendering="crispEdges">
-      <rect x="0" y="0" width="7" height="7" fill="#174e7d" />
-      <rect x="1" y="1" width="5" height="5" fill="white" />
-      <rect x="2" y="2" width="3" height="3" fill="#174e7d" />
-      <rect x="14" y="0" width="7" height="7" fill="#174e7d" />
-      <rect x="15" y="1" width="5" height="5" fill="white" />
-      <rect x="16" y="2" width="3" height="3" fill="#174e7d" />
-      <rect x="0" y="14" width="7" height="7" fill="#174e7d" />
-      <rect x="1" y="15" width="5" height="5" fill="white" />
-      <rect x="2" y="16" width="3" height="3" fill="#174e7d" />
-      {[
-        [8,0],[10,0],[12,0],[8,2],[9,2],[11,2],[13,2],[8,4],[10,4],[12,4],
-        [0,8],[2,8],[4,8],[6,8],[8,8],[10,8],[12,8],[14,8],[16,8],[18,8],[20,8],
-        [1,9],[3,9],[7,9],[9,9],[11,9],[13,9],[15,9],[17,9],[19,9],
-        [0,10],[4,10],[6,10],[8,10],[10,10],[12,10],[14,10],[18,10],[20,10],
-        [2,11],[4,11],[8,11],[10,11],[14,11],[16,11],[18,11],
-        [0,12],[2,12],[6,12],[8,12],[10,12],[12,12],[16,12],[20,12],
-        [8,13],[10,13],[14,13],[16,13],[18,13],[20,13],
-        [9,15],[11,15],[13,15],[15,15],[17,15],[19,15],
-        [8,16],[10,16],[12,16],[14,16],[18,16],[20,16],
-        [0,17],[2,17],[6,17],[8,17],[10,17],[14,17],[16,17],
-        [1,18],[3,18],[5,18],[9,18],[11,18],[13,18],[17,18],[19,18],
-        [0,19],[4,19],[6,19],[8,19],[10,19],[12,19],[14,19],[16,19],[18,19],[20,19],
-        [1,20],[3,20],[7,20],[9,20],[11,20],[15,20],[17,20],
-      ].map(([x, y], i) => (
-        <rect key={i} x={x} y={y} width="1" height="1" fill="#174e7d" />
-      ))}
-    </svg>
-  )
-}
-
 const NAV_LINKS = [
   { label: 'About', href: '#about' },
+  { label: 'How It Works', href: '#how-it-works' },
   { label: 'Features', href: '#features' },
-  { label: 'Locations', href: '#branches' },
 ]
 
 export default function LandingPage() {
   const [qrOpen, setQrOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [policyModal, setPolicyModal] = useState(null) // null | 'privacy' | 'terms'
 
   return (
     <div className="hq-landing min-h-screen bg-white">
@@ -236,7 +150,7 @@ export default function LandingPage() {
         <div
           className="absolute inset-0"
           style={{
-            backgroundImage: "url('https://images.unsplash.com/photo-1587351021821-f871837248c6?w=1600&h=900&fit=crop&auto=format')",
+            backgroundImage: `url(${background})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center 30%',
           }}
@@ -359,8 +273,8 @@ export default function LandingPage() {
           </div>
         </div>
 
-        <div className="absolute bottom-0 left-0 right-0 pointer-events-none">
-          <svg viewBox="0 0 1440 70" preserveAspectRatio="none" className="w-full h-14 md:h-20" fill="white">
+        <div className="absolute -bottom-px left-0 right-0 pointer-events-none">
+          <svg viewBox="0 0 1440 70" preserveAspectRatio="none" className="w-full h-14 md:h-20 block" fill="white">
             <path d="M0,70 C480,0 960,70 1440,30 L1440,70 Z" />
           </svg>
         </div>
@@ -463,7 +377,7 @@ export default function LandingPage() {
               {
                 title: 'Join Remotely',
                 desc: 'Open the app and get in line from home — no need to be there yet.',
-                img: 'https://images.unsplash.com/photo-1512941937669-90a1b58e7e9c?w=500&h=400&fit=crop&auto=format',
+                img: stepJoinRemotely ,
                 alt: 'Person using a phone at home',
                 icon: (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
@@ -475,7 +389,7 @@ export default function LandingPage() {
               {
                 title: 'See Your Wait',
                 desc: 'AI forecasting gives you a live, honest estimate — not a guess.',
-                img: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=500&h=400&fit=crop&auto=format',
+                img: stepSeeWait ,
                 alt: 'Dashboard showing live data on a screen',
                 icon: (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
@@ -487,7 +401,7 @@ export default function LandingPage() {
               {
                 title: 'Get Notified',
                 desc: "We'll ping you as your turn approaches, so you can time your arrival.",
-                img: 'https://images.unsplash.com/photo-1622676666869-d5deda419ff9?w=500&h=400&fit=crop&auto=format',
+                img: stepGetNotified,
                 alt: 'Phone showing a notification alert',
                 icon: (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
@@ -499,7 +413,7 @@ export default function LandingPage() {
               {
                 title: 'Walk Straight In',
                 desc: 'Arrive within your 5-minute grace period — skip the line entirely.',
-                img: 'https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=500&h=400&fit=crop&auto=format',
+                img: stepWalkIn,
                 alt: 'Patient walking into a clinic',
                 icon: (
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-5 h-5">
@@ -734,20 +648,20 @@ export default function LandingPage() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4 mt-0.5 shrink-0">
                   <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" />
                 </svg>
-                Ortigas Ave., Pasig City, Metro Manila
+                551 M.F. Jhocson St., Sampaloc, Manila
               </div>
               <div className="flex items-center gap-2">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4 shrink-0">
                   <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 3.1 4.18 2 2 0 0 1 5.08 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L9.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 23 17z" />
                 </svg>
-                (02) 8888-HQUEUE
+                (+63) 8888-HQUEUE
               </div>
               <div className="flex items-center gap-2">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4 shrink-0">
                   <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
                   <polyline points="22,6 12,13 2,6" />
                 </svg>
-                support@healthqueue.ph
+                healthqueueorg@gmail.com
               </div>
             </div>
           </div>
@@ -755,7 +669,7 @@ export default function LandingPage() {
           <div>
             <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Quick Links</h4>
             <ul className="footer-links space-y-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
-              {[['About HealthQueue+', '#about'], ['Core Features', '#features'], ['Our Locations', '#branches'], ['Download the App', '#']].map(([label, href]) => (
+              {[['About HealthQueue+', '#about'], ['How It Works', '#how-it-works'], ['Core Features', '#features'], ['Download the App', '#']].map(([label, href]) => (
                 <li key={label}>
                   <a href={href} className="hover:text-white transition-colors">
                     {label}
@@ -766,29 +680,33 @@ export default function LandingPage() {
           </div>
 
           <div>
-            <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Our Network</h4>
+            <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Platforms</h4>
             <ul className="footer-links space-y-2.5 text-sm" style={{ color: 'rgba(255,255,255,0.5)' }}>
-            {BRANCHES.map(b => (
-              <li key={b.city}>
-                <a href="#branches" className="hover:text-white transition-colors">
-                  {b.city}
-                </a>
-              </li>
-            ))}
-          </ul>
+              {['Patient Mobile App', 'Staff Tablet App', 'Admin Web Platform'].map(label => (
+                <li key={label}>
+                  <a href="#audience" className="hover:text-white transition-colors">
+                    {label}
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
 
           <div>
             <h4 className="text-sm font-semibold text-white mb-4 tracking-wide">Compliance</h4>
-            <div className="space-y-2">
+            <div>
               {[
                 { label: 'ISO/IEC 25010', sub: 'Software Quality Standard' },
                 { label: 'RA 10173', sub: 'Data Privacy Act of 2012' },
-              ].map(b => (
+              ].map((b, i) => (
                 <div
                   key={b.label}
                   className="flex items-center gap-2.5 px-3 py-2 rounded-lg"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    marginTop: i === 0 ? 0 : '10px',
+                  }}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="#45c245" strokeWidth="2" className="w-4 h-4 shrink-0">
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 12l2 2 4-4" />
@@ -809,8 +727,18 @@ export default function LandingPage() {
               © 2026 HealthQueue+. All rights reserved.
             </p>
             <div className="flex items-center gap-5 text-xs" style={{ color: 'rgba(255,255,255,0.35)' }}>
-              <a href="#" className="hover:text-white/70 transition-colors">Privacy Policy</a>
-              <a href="#" className="hover:text-white/70 transition-colors">Terms of Use</a>
+              <button
+                onClick={() => setPolicyModal('privacy')}
+                className="hover:text-white/70 transition-colors"
+                style={{ background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', }} >
+                Privacy Policy
+              </button>
+              <button
+                onClick={() => setPolicyModal('terms')}
+                className="hover:text-white/70 transition-colors"
+                style={{ background: 'none', border: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', }} >
+                Terms of Use
+              </button>
               <a href="#" className="hover:text-white/70 transition-colors">Sitemap</a>
             </div>
             <div className="flex items-center gap-3">
@@ -843,25 +771,79 @@ export default function LandingPage() {
           onClick={() => setQrOpen(false)}
         >
           <div
-            className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center"
+            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl max-h-[90vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}
           >
-            <img src={logo} alt="HealthQueue+ logo" className="w-14 h-14 object-contain mx-auto mb-3" />
-            <h3
-              className="text-xl font-bold mb-1"
-              style={{ fontFamily: "'Outfit', sans-serif", color: '#174e7d' }}
-            >
-              Download HealthQueue<span style={{ color: '#45c245' }}>+</span>
-            </h3>
-            <p className="text-sm mb-6" style={{ color: '#3d6e96' }}>
-              Scan with your phone camera to download the app
-            </p>
-            <div className="flex justify-center mb-4 p-4 rounded-2xl" style={{ background: '#f0f7ff' }}>
-              <QRCode />
+            <div className="text-center">
+              <img src={logo} alt="HealthQueue+ logo" className="w-14 h-14 object-contain mx-auto mb-3" />
+              <h3
+                className="text-xl font-bold mb-1"
+                style={{ fontFamily: "'Outfit', sans-serif", color: '#174e7d' }}
+              >
+                Download HealthQueue<span style={{ color: '#45c245' }}>+</span>
+              </h3>
+              <p className="text-sm mb-6" style={{ color: '#3d6e96' }}>
+                Scan with your phone camera to download the APK
+              </p>
+              <div className="flex justify-center mb-4 p-4 rounded-2xl" style={{ background: '#f0f7ff' }}>
+                <img src={qrCode} alt="QR code to download HealthQueue+ APK" className="w-48 h-48 object-contain" />
+              </div>
+              <p className="text-xs mb-6" style={{ color: '#6b8cac' }}>
+                Currently available for Android (APK)
+              </p>
             </div>
-            <p className="text-xs mb-6" style={{ color: '#6b8cac' }}>
-              Available for iOS and Android
-            </p>
+
+            <div className="text-left border-t pt-5 mb-6" style={{ borderColor: '#e4f1fb' }}>
+              <p className="text-xs font-bold tracking-widest uppercase mb-4" style={{ color: '#1a6fa8' }}>
+                How to Install the APK
+              </p>
+              <ol className="space-y-4">
+                {[
+                  {
+                    step: 'Scan the QR code',
+                    desc: 'Open your phone camera and point it at the QR code above. Tap the link that pops up to start the download.',
+                  },
+                  {
+                    step: 'Allow downloads from this source',
+                    desc: 'Your browser may show a warning since this isn\u2019t from the Play Store. Tap "Download anyway" or "OK" to continue.',
+                  },
+                  {
+                    step: 'Enable "Install unknown apps"',
+                    desc: 'If prompted, go to Settings > Apps > Special access > Install unknown apps, select your browser, and turn the toggle on. This is required for any APK not from the Play Store.',
+                  },
+                  {
+                    step: 'Open the downloaded file',
+                    desc: 'Go to your Downloads folder or notification tray, tap the HealthQueue+ APK file you just downloaded.',
+                  },
+                  {
+                    step: 'Tap "Install"',
+                    desc: 'Confirm the install prompt. This may take a few seconds depending on your device.',
+                  },
+                  {
+                    step: 'Open the app and sign in',
+                    desc: 'Once installed, tap "Open." You can sign in with your mobile number \u2014 you\u2019ll receive an SMS one-time passcode to verify your account.',
+                  },
+                ].map((item, i) => (
+                  <li key={item.step} className="flex gap-3">
+                    <span
+                      className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white"
+                      style={{ background: '#1a6fa8' }}
+                    >
+                      {i + 1}
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold mb-0.5" style={{ color: '#0c2d4e' }}>
+                        {item.step}
+                      </p>
+                      <p className="text-xs leading-relaxed" style={{ color: '#3d6e96' }}>
+                        {item.desc}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+
             <button
               onClick={() => setQrOpen(false)}
               className="w-full py-3 rounded-xl text-sm font-semibold text-white"
@@ -869,6 +851,50 @@ export default function LandingPage() {
             >
               Close
             </button>
+          </div>
+        </div>
+       )}
+
+      {policyModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(12,45,78,0.65)', backdropFilter: 'blur(6px)' }}
+          onClick={() => setPolicyModal(null)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl max-h-[85vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: '#e4f1fb' }}>
+              <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 700, color: '#174e7d', fontSize: '1rem' }}>
+                HealthQueue<span style={{ color: '#45c245' }}>+</span>
+              </span>
+              <button
+                onClick={() => setPolicyModal(null)}
+                aria-label="Close"
+                className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors"
+                style={{ color: '#3d6e96' }}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="px-6 py-4 overflow-y-auto">
+              {policyModal === 'privacy' && <PrivacyPolicy />}
+              {policyModal === 'terms' && <TermsAndAgreements />}
+            </div>
+
+            <div className="px-6 py-4 border-t" style={{ borderColor: '#e4f1fb' }}>
+              <button
+                onClick={() => setPolicyModal(null)}
+                className="w-full py-3 rounded-xl text-sm font-semibold text-white"
+                style={{ background: 'linear-gradient(135deg, #1a6fa8, #174e7d)' }}
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

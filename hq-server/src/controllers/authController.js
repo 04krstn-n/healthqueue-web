@@ -39,6 +39,29 @@ const normalizePhone = (phone) => {
 // that check too.
 const PHONE_IN_USE_MESSAGE = 'This number is already in use, please use the number to login';
 
+// Server-authoritative password policy (Capstone requirement: "the server
+// must remain authoritative" — the mobile app's own _passRegex in
+// register_screen.dart mirrors this exactly, but until now nothing on the
+// server actually enforced it, so a weak password sent directly to the API
+// — bypassing the app entirely — would have been silently accepted).
+// Returns a list of the SPECIFIC missing requirements (not just "invalid"),
+// so the client can show the same itemized feedback either way.
+const validatePasswordStrength = (password) => {
+  const problems = [];
+  if (!password || password.length < 8) problems.push('at least 8 characters');
+  if (!/[a-z]/.test(password || '')) problems.push('one lowercase letter');
+  if (!/[A-Z]/.test(password || '')) problems.push('one uppercase letter');
+  if (!/\d/.test(password || '')) problems.push('one number');
+  if (!/[^\w\s]/.test(password || '')) problems.push('one special character');
+  return problems;
+};
+
+// Registration-OTP brute-force guard (Capstone requirement #8: "Too many
+// attempts" must be a real, server-enforced case, not just a client-side
+// counter — before this, a direct API call could retry a 6-digit OTP
+// indefinitely with zero server-side limit).
+const MAX_OTP_ATTEMPTS = 3;
+
 // POST /api/auth/register — Step 1 of phone-verified registration. Does NOT
 // create a User/Patient yet — only a PendingRegistration, so an abandoned
 // or never-verified signup never leaves a real account behind. The actual
@@ -61,6 +84,14 @@ const register = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'Gender must be Male or Female.',
+      });
+    }
+
+    const passwordProblems = validatePasswordStrength(password);
+    if (passwordProblems.length > 0) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `Password must contain ${passwordProblems.join(', ')}.`,
       });
     }
 
@@ -108,6 +139,7 @@ const register = async (req, res) => {
         gender: gender || '',
         otp: otpCode,
         otpExpires,
+        otpAttempts: 0,
         createdAt: new Date(),
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
@@ -180,10 +212,35 @@ const verifyOTP = async (req, res) => {
       });
     }
 
-    if (pending.otp !== otp.toString().trim()) {
+    if ((pending.otpAttempts || 0) >= MAX_OTP_ATTEMPTS) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
-        message: 'Invalid OTP code. Please check your console log.',
+        message: 'Maximum attempts reached. Please request a new OTP.',
+        maxAttemptsReached: true,
+      });
+    }
+
+    if (pending.otp !== otp.toString().trim()) {
+      // Server-enforced limit — this used to exist only as a client-side
+      // counter (register_screen.dart's _otpAttempts), which a direct API
+      // call could simply ignore and keep guessing indefinitely. Checked
+      // BEFORE comparing the code (see the block above) rather than only
+      // incrementing-and-checking here — otherwise a 4th, correct, guess
+      // right after 3 wrong ones would still slip through and succeed,
+      // since it would never hit this mismatch branch at all.
+      pending.otpAttempts = (pending.otpAttempts || 0) + 1;
+      await pending.save();
+      if (pending.otpAttempts >= MAX_OTP_ATTEMPTS) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          success: false,
+          message: 'Maximum attempts reached. Please request a new OTP.',
+          maxAttemptsReached: true,
+        });
+      }
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Invalid OTP code. Please try again.',
+        attemptsRemaining: MAX_OTP_ATTEMPTS - pending.otpAttempts,
       });
     }
 
@@ -298,6 +355,7 @@ const resendOTP = async (req, res) => {
     const otpCode = generateOTPCode();
     pending.otp = otpCode;
     pending.otpExpires = new Date(Date.now() + 5 * 60 * 1000);
+    pending.otpAttempts = 0; // fresh code deserves a fresh set of tries
     await pending.save();
 
     const smsResult = await sendOTP(pending.phone, otpCode);

@@ -1,0 +1,48 @@
+.policy-container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 8px 4px;
+  line-height: 1.7;
+  color: #333;
+}
+
+.policy-container h1 {
+  margin-bottom: 8px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #0c2d4e;
+}
+
+.policy-container h2 {
+  margin-top: 24px;
+  margin-bottom: 10px;
+  font-size: 17px;
+  font-weight: 600;
+  color: #174e7d;
+}
+
+.policy-container p {
+  margin-bottom: 14px;
+  font-size: 14px;
+}
+
+.policy-container ul {
+  margin-bottom: 18px;
+  padding-left: 22px;
+}
+
+.policy-container li {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.effective-date {
+  color: #666;
+  margin-bottom: 24px;
+  font-size: 13px;
+}
+
+.policy-container a {
+  color: #1a6fa8;
+  text-decoration: underline;
+}
