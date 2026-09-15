@@ -14,6 +14,10 @@ const {
   getQueueMetrics,
   addWalkIn,
   markOnTheWay,
+  getSuggestedWaitTime,
+  applySuggestedWaitTime,
+  rejectSuggestedWaitTime,
+  clearWaitTimeOverride,
 } = require('../controllers/queueController');
 const { protect, authorizeRoles, patientOnly } = require('../middleware/auth');
 
@@ -24,6 +28,12 @@ const staffOrAdmin = authorizeRoles('staff', 'facility_admin', 'super_admin');
 // ── 1. Static Routes First ───────────────────────────────────────────────────
 router.get('/metrics', staffOrAdmin, getQueueMetrics);
 router.get('/my-status', patientOnly, getMyQueueStatus);
+
+// ── Suggested Waiting Time — staff accept/reject (item 1) ───────────────────
+router.get('/suggested-wait', staffOrAdmin, getSuggestedWaitTime);
+router.put('/suggested-wait/apply', staffOrAdmin, applySuggestedWaitTime);
+router.put('/suggested-wait/reject', staffOrAdmin, rejectSuggestedWaitTime);
+router.put('/wait-time/clear-override', staffOrAdmin, clearWaitTimeOverride);
 
 // ── 2. Queue Joins / Additions ───────────────────────────────────────────────
 router.post('/join', patientOnly, joinQueue);

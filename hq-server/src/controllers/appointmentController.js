@@ -5,8 +5,90 @@ const Appointment = require('../models/Appointment');
 const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
 const TimeSlot = require('../models/TimeSlot');
+const QueueEntry = require('../models/QueueEntry');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
+const { getNextQueueNumber, estimateWaitTime } = require('../utils/queueHelpers');
+
+// ─── Appointment ↔ Queue check-in rules (Capstone Requirement #5) ───────────
+// An appointment enters the ACTIVE queue only at check-in, never at booking
+// time (see checkInAppointment below) — this is the "do not place every
+// future appointment into the queue hours before its slot" requirement.
+//
+// Patients may check in starting this many minutes BEFORE their slot...
+const EARLY_CHECKIN_WINDOW_MINUTES = 15;
+// ...and are still treated as "on time" (keep their reserved slot position)
+// up to this many minutes AFTER it. Beyond that grace window, checking in
+// no longer honors the original slot — they queue based on when they
+// actually showed up, same as a walk-in arriving at that moment.
+const LATE_GRACE_MINUTES = 10;
+
+/**
+ * Computes the effective "joinedAt" an appointment check-in should use for
+ * queue ordering. This is the key idea that lets appointment patients slot
+ * into the SAME priority-ratio-ordered timeline as walk-ins (item 5)
+ * without any separate appointment-vs-walk-in logic anywhere else in the
+ * queue:
+ *   - Checking in early or on time -> effectiveJoinedAt = the scheduled
+ *     slot time (never earlier), so arriving 20 minutes early doesn't grant
+ *     an earlier queue position than the slot itself, and doesn't cut in
+ *     front of walk-ins who joined earlier than the slot time.
+ *   - Checking in late (beyond the grace window) -> effectiveJoinedAt = the
+ *     actual check-in time, i.e. they lose their reserved slot and queue
+ *     like a walk-in arriving right now.
+ */
+const computeEffectiveJoinedAt = (appointmentDateTime, checkInTime) => {
+  const graceDeadline = new Date(appointmentDateTime.getTime() + LATE_GRACE_MINUTES * 60 * 1000);
+  return checkInTime <= graceDeadline ? new Date(appointmentDateTime) : new Date(checkInTime);
+};
+
+/**
+ * Shared core: turns a confirmed Appointment into a live QueueEntry. Used by
+ * both the patient's self check-in (checkInAppointment) and staff marking
+ * an appointment "arrived" from the tablet (updateStatus) — one function,
+ * so the two paths can never diverge in how positioning is calculated.
+ */
+const checkInAppointmentToQueue = async (appointment, req) => {
+  const clinic = await Clinic.findById(appointment.clinic);
+  if (!clinic) throw new Error('Clinic not found.');
+
+  const now = new Date();
+  const effectiveJoinedAt = computeEffectiveJoinedAt(appointment.appointmentDate, now);
+
+  const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
+  const queueNumber = await getNextQueueNumber(appointment.clinic, prefix);
+  const estWait = await estimateWaitTime(appointment.clinic, appointment.serviceId);
+
+  const entry = await QueueEntry.create({
+    clinic: appointment.clinic,
+    patient: appointment.patient,
+    patientName: appointment.patientName,
+    patientPhone: appointment.patientPhone,
+    patientType: appointment.patientType || 'Regular',
+    serviceName: appointment.serviceName,
+    serviceId: appointment.serviceId || null,
+    queueNumber,
+    queueType: appointment.patientType && appointment.patientType !== 'Regular' ? 'Priority' : 'Regular',
+    priority: Boolean(appointment.patientType && appointment.patientType !== 'Regular'),
+    joinedRemotely: false,
+    estimatedWaitMinutes: estWait,
+    joinedAt: effectiveJoinedAt,
+  });
+
+  appointment.status = 'arrived';
+  appointment.arrivedAt = now;
+  appointment.queueEntry = entry._id;
+  await appointment.save();
+
+  await Clinic.findByIdAndUpdate(appointment.clinic, { $inc: { queueLength: 1 } });
+
+  const io = req?.app?.get('io');
+  if (io) {
+    io.to(`clinic_${appointment.clinic}`).emit('queue_entry_added', { entry, fromAppointment: true });
+  }
+
+  return entry;
+};
 
 // POST /api/appointments — Patient books an appointment
 const bookAppointment = async (req, res) => {
@@ -434,6 +516,22 @@ const updateStatus = async (req, res) => {
       });
     }
 
+    // 'arrived' is special-cased: staff marking a patient arrived from the
+    // tablet must ALSO create the live queue entry (item 5) — otherwise a
+    // patient checked in by staff would be "arrived" but never actually
+    // enter the queue, exactly the disconnect the confirmed->arrived
+    // transition used to have.
+    if (req.body.status === 'arrived') {
+      const fullAppt = await Appointment.findById(req.params.id);
+      const appt = await checkInAppointmentToQueue(fullAppt, req);
+      await logAction({
+        actor: req.user, action: 'update', targetType: 'Appointment', targetId: fullAppt._id,
+        targetLabel: `${fullAppt.patientName} — ${fullAppt.serviceName}`, clinicId: fullAppt.clinic,
+        details: { status: 'arrived', checkedInBy: 'staff' },
+      });
+      return res.status(HttpStatus.OK).json({ success: true, data: fullAppt, queueEntry: appt });
+    }
+
     const appt = await Appointment.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
 
     if (appt) {
@@ -454,6 +552,52 @@ const updateStatus = async (req, res) => {
     return res.status(HttpStatus.OK).json({ success: true, data: appt });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: err.message });
+  }
+};
+
+// PUT /api/appointments/:id/check-in — Patient self check-in (mobile). This
+// is the ONLY moment a booked appointment enters the live queue (item 5,
+// answers "when does the patient officially enter the queue?").
+const checkInAppointment = async (req, res) => {
+  try {
+    const appointment = await Appointment.findById(req.params.id);
+    if (!appointment) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Appointment not found.' });
+    }
+    if (appointment.patient.toString() !== req.user._id.toString()) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'Not authorized for this appointment.' });
+    }
+    if (appointment.status !== 'confirmed') {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `Cannot check in — appointment status is "${appointment.status}", not "confirmed".`,
+      });
+    }
+
+    const now = new Date();
+    const windowOpensAt = new Date(appointment.appointmentDate.getTime() - EARLY_CHECKIN_WINDOW_MINUTES * 60 * 1000);
+    if (now < windowOpensAt) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `Check-in opens at ${windowOpensAt.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })} (${EARLY_CHECKIN_WINDOW_MINUTES} min before your slot).`,
+      });
+    }
+
+    const entry = await checkInAppointmentToQueue(appointment, req);
+    const isLate = now > new Date(appointment.appointmentDate.getTime() + LATE_GRACE_MINUTES * 60 * 1000);
+
+    return res.status(HttpStatus.OK).json({
+      success: true,
+      message: isLate
+        ? 'Checked in. You arrived after your slot\'s grace period, so you have been queued based on your actual arrival time.'
+        : 'Checked in successfully. You have been added to the active queue.',
+      data: appointment,
+      queueEntry: entry,
+      wasLate: isLate,
+    });
+  } catch (err) {
+    console.error('checkInAppointment Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to check in.' });
   }
 };
 
@@ -489,6 +633,7 @@ module.exports = {
   getAppointments,
   getAppointment,
   updateStatus,
+  checkInAppointment,
   getAvailableSlots,
   getTodayAppointments,
   getTimeSlots,

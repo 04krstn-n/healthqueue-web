@@ -9,6 +9,7 @@ const {
   getAppointments,
   getAppointment,
   updateStatus,
+  checkInAppointment,
   getAvailableSlots,
   getTodayAppointments,
   getTimeSlots,
@@ -55,6 +56,7 @@ router
 router.get('/:id', getAppointment); 
 router.put('/:id', updateAppointment); // Handles rescheduling & general updates
 router.put('/:id/status', authorizeRoles('staff', 'facility_admin', 'super_admin'), updateStatus);
+router.put('/:id/check-in', patientOnly, checkInAppointment);
 router.put('/:id/cancel', cancelMyAppointment); 
 router.put('/:id/cancel-my', cancelMyAppointment); 
 

@@ -73,9 +73,27 @@ const QueueEntrySchema = new mongoose.Schema(
     positionAtJoin:       { type: Number, default: 0 },
     
     // Actual computed metrics for OpenAI & Analytics
+    // ─── Metric definitions (Capstone Requirement #3 — Waiting vs Service vs TAT) ───
+    // Waiting Time   = joinedAt  -> servedAt   (queue entry until staff actually starts serving)
+    // Service Time   = servedAt  -> completedAt (staff starts serving until consultation ends)
+    // Turnaround Time (TAT) = joinedAt -> completedAt (full end-to-end duration)
+    // These are three DISTINCT durations. Waiting Time is deliberately NOT
+    // derived from calledAt: "called" only means the patient's number was
+    // announced / the 5-min grace period started, not that service began —
+    // conflating the two used to make "wait time" jump around depending on
+    // how long the grace period took instead of reflecting when the patient
+    // actually started being served.
     waitTimeInMinutes: { 
       type: Number, 
       default: 0 
+    },
+    // NEW FIELD — did not exist before. Needed because TAT alone can't tell
+    // staff/analytics whether a long visit was caused by a long queue wait
+    // or a long consultation; without this, "improve TAT" had no way to
+    // distinguish the two root causes (see item 3 of the request).
+    serviceTimeInMinutes: {
+      type: Number,
+      default: 0,
     },
     turnaroundTimeInMinutes: { 
       type: Number, 
@@ -88,21 +106,33 @@ const QueueEntrySchema = new mongoose.Schema(
 // Indexes for fast lookup
 QueueEntrySchema.index({ clinic: 1, joinedAt: 1, status: 1 });
 QueueEntrySchema.index({ patient: 1, status: 1 });
+// Historical analytics (item 6/7) query by clinic+service+date range a lot —
+// this index makes those aggregations fast even as history accumulates.
+QueueEntrySchema.index({ clinic: 1, serviceId: 1, joinedAt: -1 });
 
 // ─── Pre-Save Calculation Hook ────────────────────────────────────────────────
 QueueEntrySchema.pre('save', function (next) {
-  // 1. Calculate actual wait time once serving/called
-  const startTime = this.servedAt || this.calledAt;
-  if (startTime && this.joinedAt) {
-    const diffMs = startTime.getTime() - this.joinedAt.getTime();
+  // 1. Waiting Time: locked in the instant service actually starts (servedAt
+  // set). Before that, we don't overwrite it here at all — the *live*
+  // estimate shown to patients/staff while still waiting comes from
+  // estimateWaitTime()/getMyQueueStatus, not from this stored field, so
+  // there's exactly one place a "final" wait time gets written.
+  if (this.servedAt && this.joinedAt) {
+    const diffMs = this.servedAt.getTime() - this.joinedAt.getTime();
     this.waitTimeInMinutes = Math.max(0, Math.round(diffMs / (1000 * 60)));
   }
 
-  // 2. Calculate total Turnaround Time (TAT) when status is 'completed' or 'done'
+  // 2. Service Time: servedAt -> completedAt. Only meaningful once the
+  // session is actually finished.
   const isFinished = this.status === 'completed' || this.status === 'done';
-  const finishTime = this.completedAt || new Date();
+  if (isFinished && this.servedAt && this.completedAt) {
+    const svcMs = this.completedAt.getTime() - this.servedAt.getTime();
+    this.serviceTimeInMinutes = Math.max(0, Math.round(svcMs / (1000 * 60)));
+  }
 
+  // 3. Turnaround Time (TAT): full end-to-end joinedAt -> completedAt.
   if (isFinished && this.joinedAt) {
+    const finishTime = this.completedAt || new Date();
     const totalMs = finishTime.getTime() - this.joinedAt.getTime();
     this.turnaroundTimeInMinutes = Math.max(0, Math.round(totalMs / (1000 * 60)));
   }

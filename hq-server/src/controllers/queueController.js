@@ -6,11 +6,15 @@ const QueueEntry = require('../models/QueueEntry');
 const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
 const { notifyUser } = require('../utils/notify');
-const { 
-  getNextQueueNumber, 
-  estimateWaitTime, 
-  getGracePeriodExpiry 
+const {
+  getNextQueueNumber,
+  estimateWaitTime,
+  computeSuggestedWaitTime,
+  orderQueueByPriorityRatio,
+  getPriorityRatio,
+  getGracePeriodExpiry,
 } = require('../utils/queueHelpers');
+const Appointment = require('../models/Appointment');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
 
@@ -28,6 +32,25 @@ const emitQueueUpdate = (req, clinicId, eventName, payload) => {
   if (io) {
     io.to(`clinic_${clinicId}`).emit(eventName, payload);
     io.emit('global_queue_change', { clinicId, eventName });
+  }
+};
+
+/**
+ * Keeps a checked-in Appointment's status in sync with its linked
+ * QueueEntry (item 5) — once check-in creates a QueueEntry
+ * (Appointment.queueEntry), the queue's own lifecycle (serving/completed/
+ * no_show/cancelled) should drive the appointment's status too, instead of
+ * the appointment being left stuck on "arrived" forever with no connection
+ * to what actually happened at the counter.
+ */
+const syncLinkedAppointment = async (queueEntryId, appointmentStatus, extra = {}) => {
+  try {
+    await Appointment.findOneAndUpdate(
+      { queueEntry: queueEntryId },
+      { status: appointmentStatus, ...extra }
+    );
+  } catch (e) {
+    console.warn('[queue] syncLinkedAppointment skipped:', e.message);
   }
 };
 
@@ -56,26 +79,58 @@ const getQueueEntries = async (req, res) => {
       .populate('patient', 'fullName phone patientType')
       .sort({ joinedAt: 1 });
 
+    // ── Priority-ratio ordering (item 4) ─────────────────────────────────
+    // The `waiting` bucket is reordered by orderQueueByPriorityRatio so the
+    // tablet displays (and therefore staff act on) the SAME serving order
+    // mobile's position/peopleAhead is computed from — one ordering
+    // algorithm, not "tablet shows join order, server thinks something
+    // else." Other statuses (called/serving/done/etc.) keep chronological
+    // order since ordering only matters for who's next.
+    const waitingEntries = entries.filter((e) => e.status === 'waiting');
+    const otherEntries = entries.filter((e) => e.status !== 'waiting');
+
+    const ratioByClinic = new Map();
+    const orderedWaitingByClinic = new Map();
+    for (const entry of waitingEntries) {
+      const cid = entry.clinic?._id?.toString() || entry.clinic?.toString();
+      if (!orderedWaitingByClinic.has(cid)) orderedWaitingByClinic.set(cid, []);
+      orderedWaitingByClinic.get(cid).push(entry);
+    }
+    const orderedWaiting = [];
+    for (const [cid, group] of orderedWaitingByClinic) {
+      if (!ratioByClinic.has(cid)) ratioByClinic.set(cid, await getPriorityRatio(cid));
+      orderedWaiting.push(...orderQueueByPriorityRatio(group, ratioByClinic.get(cid)));
+    }
+
     // Recompute each active entry's estimated wait time live rather than
     // trusting the value stored at join time — that snapshot never changed
     // again, so a service duration update (Waiting Time Update screen) was
     // invisible to staff for anyone already in the queue, even though it
-    // now correctly affects new joiners (see estimateWaitTime). Only one
-    // estimateWaitTime() call per distinct clinic+service combination in
-    // this batch, not one per entry.
-    const cache = new Map();
-    const results = await Promise.all(entries.map(async (entry) => {
-      const obj = entry.toObject();
-      if (['waiting', 'serving'].includes(entry.status)) {
-        const cid = entry.clinic?._id?.toString() || entry.clinic?.toString();
-        const key = `${cid}:${entry.serviceId || ''}`;
-        if (!cache.has(key)) {
-          cache.set(key, estimateWaitTime(cid, entry.serviceId));
+    // now correctly affects new joiners (see estimateWaitTime). Waiting
+    // entries use their priority-ratio position (peopleAheadOverride) so
+    // the number matches the order they're actually shown/served in.
+    const results = await Promise.all([
+      ...orderedWaiting.map(async (obj) => {
+        const cid = obj.clinic?._id?.toString() || obj.clinic?.toString();
+        obj.estimatedWaitMinutes = await estimateWaitTime(cid, obj.serviceId, {
+          peopleAheadOverride: obj.queuePosition - 1,
+        });
+        return obj;
+      }),
+      ...otherEntries.map(async (entry) => {
+        const obj = entry.toObject();
+        if (entry.status === 'serving') {
+          const cid = entry.clinic?._id?.toString() || entry.clinic?.toString();
+          obj.estimatedWaitMinutes = await estimateWaitTime(cid, entry.serviceId, { peopleAheadOverride: 0 });
         }
-        obj.estimatedWaitMinutes = await cache.get(key);
-      }
-      return obj;
-    }));
+        return obj;
+      }),
+    ]);
+
+    // Preserve original joinedAt ordering for the response's overall
+    // grouping, but each entry now carries its priority-ratio `queuePosition`
+    // (waiting entries only) for clients that want to display serving order.
+    results.sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
 
     return res.status(HttpStatus.OK).json({
       success: true,
@@ -265,14 +320,26 @@ const getMyQueueStatus = async (req, res) => {
       return res.status(HttpStatus.OK).json({ success: true, activeQueue: false, entry: null });
     }
 
-    const ahead = await QueueEntry.countDocuments({
-      clinic: entry.clinic._id,
-      status: 'waiting',
-      joinedAt: todayRange(),
-      _id: { $lt: entry._id },
-    });
-
-    const estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId);
+    // Same priority-ratio ordering the tablet sees (item 1/4) — "ahead of
+    // me" must mean the same thing for the patient as it does for staff,
+    // not a plain join-order count that ignores approved priority status.
+    let ahead = 0;
+    let estWait;
+    if (entry.status === 'waiting') {
+      const waitingEntries = await QueueEntry.find({
+        clinic: entry.clinic._id,
+        status: 'waiting',
+        joinedAt: todayRange(),
+      });
+      const ratio = await getPriorityRatio(entry.clinic._id);
+      const ordered = orderQueueByPriorityRatio(waitingEntries, ratio);
+      const mine = ordered.find((e) => String(e._id) === String(entry._id));
+      ahead = mine ? mine.queuePosition - 1 : 0;
+      estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId, { peopleAheadOverride: ahead });
+    } else {
+      // Already called/serving — no one "ahead", they're at the counter.
+      estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId, { peopleAheadOverride: 0 });
+    }
 
     return res.status(HttpStatus.OK).json({
       success: true,
@@ -418,6 +485,7 @@ const startService = async (req, res) => {
     }
 
     emitQueueUpdate(req, entry.clinic, 'service_started', { entryId: entry._id });
+    await syncLinkedAppointment(entry._id, 'serving');
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Service started.', entry });
   } catch (err) {
@@ -449,6 +517,7 @@ const completePatient = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'queue_completed', { entryId: entry._id });
+    await syncLinkedAppointment(entry._id, 'completed', { completedAt: entry.completedAt });
 
     await logAction({
       actor: req.user,
@@ -534,6 +603,7 @@ const markNoShow = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'patient_noshow', { entryId: entry._id });
+    await syncLinkedAppointment(entry._id, 'no_show');
 
     await logAction({
       actor: req.user,
@@ -573,6 +643,10 @@ const cancelEntry = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'queue_cancelled', { entryId: entry._id });
+    await syncLinkedAppointment(entry._id, 'cancelled', {
+      cancelledAt: entry.cancelledAt,
+      cancelledBy: req.user.role === 'patient' ? 'patient' : 'staff',
+    });
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'Queue entry cancelled successfully.' });
   } catch (err) {
@@ -772,6 +846,128 @@ const addWalkIn = async (req, res) => {
   }
 };
 
+// GET /api/queues/suggested-wait?clinicId=xxx&serviceId=yyy — the
+// analytics-suggested waiting time staff can accept or reject (item 1).
+// Read-only: does NOT change the operational wait time by itself.
+const getSuggestedWaitTime = async (req, res) => {
+  try {
+    const clinicId = req.query.clinicId || req.user.clinicId;
+    const { serviceId } = req.query;
+    if (!clinicId) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'clinicId is required.' });
+    }
+    const suggestion = await computeSuggestedWaitTime(clinicId, serviceId || null);
+    const clinic = await Clinic.findById(clinicId).select('waitTimeOverrideMinutes currentWaitingTime');
+    return res.status(HttpStatus.OK).json({
+      success: true,
+      ...suggestion,
+      currentOperationalMinutes: typeof clinic?.waitTimeOverrideMinutes === 'number'
+        ? clinic.waitTimeOverrideMinutes
+        : suggestion.suggestedMinutes,
+      isOverrideActive: typeof clinic?.waitTimeOverrideMinutes === 'number',
+    });
+  } catch (err) {
+    console.error('getSuggestedWaitTime Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to compute suggested waiting time.' });
+  }
+};
+
+// PUT /api/queues/suggested-wait/apply — staff accepts the suggestion; it
+// becomes the operational waiting time for every client (item 1).
+const applySuggestedWaitTime = async (req, res) => {
+  try {
+    const clinicId = req.body.clinicId || req.user.clinicId;
+    const { serviceId, minutes } = req.body;
+    if (!clinicId) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'clinicId is required.' });
+    }
+
+    // Re-derive the suggestion server-side rather than trusting a client-
+    // supplied number outright — `minutes` is only accepted if it matches
+    // what the server itself would currently suggest, so a stale tablet
+    // screen can't push an outdated value as if it were fresh.
+    const suggestion = await computeSuggestedWaitTime(clinicId, serviceId || null);
+    const appliedMinutes = typeof minutes === 'number' ? minutes : suggestion.suggestedMinutes;
+
+    const clinic = await Clinic.findByIdAndUpdate(
+      clinicId,
+      {
+        waitTimeOverrideMinutes: appliedMinutes,
+        waitTimeOverrideSetAt: new Date(),
+        waitTimeOverrideSetBy: req.user._id,
+        currentWaitingTime: appliedMinutes,
+      },
+      { new: true }
+    );
+
+    emitQueueUpdate(req, clinicId, 'wait_time_updated', {
+      clinicId, waitTimeMinutes: appliedMinutes, source: 'staff_applied_suggestion',
+    });
+
+    await logAction({
+      actor: req.user,
+      action: 'apply_suggested_wait_time',
+      targetType: 'Clinic',
+      targetId: clinicId,
+      targetLabel: clinic?.name || 'Clinic',
+      clinicId,
+      details: { minutes: appliedMinutes, basis: suggestion.basis },
+    });
+
+    return res.status(HttpStatus.OK).json({
+      success: true,
+      message: `Suggested waiting time of ${appliedMinutes} min applied.`,
+      waitTimeOverrideMinutes: appliedMinutes,
+    });
+  } catch (err) {
+    console.error('applySuggestedWaitTime Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to apply suggested waiting time.' });
+  }
+};
+
+// PUT /api/queues/suggested-wait/reject — staff declines the suggestion.
+// Explicitly a no-op on the operational number (existing/manual value is
+// kept) — this endpoint exists mainly so the decision gets logged.
+const rejectSuggestedWaitTime = async (req, res) => {
+  try {
+    const clinicId = req.body.clinicId || req.user.clinicId;
+    if (!clinicId) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'clinicId is required.' });
+    }
+    await logAction({
+      actor: req.user,
+      action: 'reject_suggested_wait_time',
+      targetType: 'Clinic',
+      targetId: clinicId,
+      targetLabel: 'Clinic',
+      clinicId,
+      details: {},
+    });
+    return res.status(HttpStatus.OK).json({ success: true, message: 'Suggestion rejected. Existing waiting time unchanged.' });
+  } catch (err) {
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to reject suggested waiting time.' });
+  }
+};
+
+// PUT /api/queues/wait-time/clear-override — revert to fully automatic
+// server-computed wait time (undoes a previously applied suggestion/manual
+// value). Not part of the original ask but a natural, low-risk complement
+// to "apply" so staff aren't stuck with a stale manual number forever.
+const clearWaitTimeOverride = async (req, res) => {
+  try {
+    const clinicId = req.body.clinicId || req.user.clinicId;
+    await Clinic.findByIdAndUpdate(clinicId, {
+      waitTimeOverrideMinutes: null,
+      waitTimeOverrideSetAt: null,
+      waitTimeOverrideSetBy: null,
+    });
+    emitQueueUpdate(req, clinicId, 'wait_time_updated', { clinicId, source: 'override_cleared' });
+    return res.status(HttpStatus.OK).json({ success: true, message: 'Reverted to automatic waiting-time calculation.' });
+  } catch (err) {
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to clear override.' });
+  }
+};
+
 module.exports = {
   getQueueEntries,
   joinQueue,
@@ -786,4 +982,8 @@ module.exports = {
   getQueueMetrics,
   addWalkIn,
   markOnTheWay,
+  getSuggestedWaitTime,
+  applySuggestedWaitTime,
+  rejectSuggestedWaitTime,
+  clearWaitTimeOverride,
 };

@@ -60,7 +60,26 @@ const ClinicSchema = new mongoose.Schema(
     queueLength:          { type: Number, default: 0 },
     currentWaitingTime:   { type: Number, default: 0 },
     baseWaitTimePerPerson:{ type: Number, default: 10 },
-    
+
+    // ─── Staff-Applied Wait-Time Override (Capstone Requirement #1) ──────────
+    // null = system uses the live server-computed suggestion automatically
+    // (queueHelpers.estimateWaitTime). Once staff "applies" a suggested
+    // waiting time (tablet), this is set and becomes the single operational
+    // number every client (mobile/tablet/web) is shown — until staff clears
+    // it or applies a new one. Rejecting a suggestion never touches this.
+    waitTimeOverrideMinutes: { type: Number, default: null },
+    waitTimeOverrideSetAt:   { type: Date, default: null },
+    waitTimeOverrideSetBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+
+    // ─── Priority Scheduling Ratio (Capstone Requirement #4) ─────────────────
+    // Configurable priority:regular serving ratio so a clinic isn't hard-coded
+    // to one policy. Default 1:3 — see queueHelpers.orderQueueByPriorityRatio
+    // for the scheduling algorithm and docs/analysis for the reasoning.
+    priorityRatio: {
+      priority: { type: Number, default: 1, min: 1 },
+      regular:  { type: Number, default: 3, min: 1 },
+    },
+
     // AI forecasting
     peakHours: [PeakHourSchema],
     
