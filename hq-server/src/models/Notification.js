@@ -15,7 +15,14 @@ const NotificationSchema = new mongoose.Schema(
     message: { type: String, required: true, trim: true },
     type: {
       type: String,
-      enum: ['queue', 'appointment', 'system', 'reminder', 'turn_alert', 'sms_otp'],
+      // 'staff_reply' added: chatbotAdminController.replyToThread was
+      // calling notifyUser(..., { type: 'staff_reply' }) with a value not
+      // in this enum, so Notification.create() threw a ValidationError on
+      // every single staff reply — AFTER the ChatLog row (the actual
+      // reply) had already been created and socket-pushed to the patient.
+      // The whole request still 500'd because of this, so staff always
+      // saw "Failed to send reply." even when the message went through.
+      enum: ['queue', 'appointment', 'system', 'reminder', 'turn_alert', 'sms_otp', 'staff_reply'],
       default: 'system',
     },
     channel: {

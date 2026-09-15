@@ -240,6 +240,20 @@ const handleMessage = async (req, res) => {
 
     if (willEscalate) {
       emitEscalation(req, resolvedClinicId, { logId: log._id, message: log.message });
+    } else if (resolvedClinicId) {
+      // Non-escalated messages didn't notify staff at all before — the
+      // Conversations list would only ever move when a patient escalated,
+      // so a plain "hi" or a bot-answered question wouldn't update the
+      // left panel live, only on the next manual refresh. Reuses the same
+      // 'chat_thread_message' event replyToThread already emits (see
+      // chatbotAdminController.js) so the tablet's one existing listener
+      // covers messages moving in either direction.
+      const io = req.app.get('io');
+      if (io) {
+        const payload = { patientId: String(req.user?._id || patientId), logId: log._id };
+        io.to(`clinic_${resolvedClinicId}`).emit('chat_thread_message', payload);
+        io.emit('global_chat_thread_message', payload);
+      }
     }
 
     return res.status(HttpStatus.OK).json({

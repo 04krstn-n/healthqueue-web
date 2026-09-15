@@ -353,6 +353,114 @@ const clearChatLogs = async (req, res) => {
 // existed before, even though the ChatLog schema was already designed
 // for it (source: 'staff' has been a valid enum value this whole time):
 // the tablet's "Reply" button was calling a route that 404'd.
+// ── GET /api/chatbot-admin/conversations ────────────────────────────────────
+// Groups this clinic's ChatLog rows by patient into ONE row per
+// conversation — the data the Messenger-style list needs (last message
+// preview, when, unread count, and a conversation-level status) that no
+// endpoint previously computed; getChatLogs/getEscalatedLogs both return
+// flat per-message rows instead.
+//
+// Done in application code rather than a Mongo aggregation pipeline: the
+// 7-day TTL on ChatLog already bounds how much there ever is to scan (see
+// ChatLog.js), so a straightforward fetch + group-in-JS stays fast and is
+// far easier to verify/defend than a multi-stage pipeline for what is,
+// after all, a "defense-ready MVP" per the project's own scope.
+//
+// Status per conversation:
+//   'escalated' — most recent escalation on this patient is unresolved
+//   'resolved'  — most recent escalation on this patient was resolved
+//   'open'      — patient has messaged but never escalated (pure bot/FAQ chat)
+const getConversations = async (req, res) => {
+  try {
+    const filter = {};
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+    } else if (req.query.clinicId) {
+      filter.$or = [{ clinicId: req.query.clinicId }, { clinicId: null }];
+    }
+    // Only conversations that actually have a patient attached — a handful
+    // of very old/anonymous rows predate the patient field being required
+    // in practice and can't be grouped into anyone's conversation.
+    filter.patient = { $ne: null };
+
+    const logs = await ChatLog.find(filter)
+      .populate('patient', 'fullName')
+      .sort({ createdAt: -1 })
+      .limit(1000)
+      .lean();
+
+    const byPatient = new Map();
+    for (const log of logs) {
+      const pid = log.patient?._id?.toString();
+      if (!pid) continue;
+      if (!byPatient.has(pid)) byPatient.set(pid, []);
+      byPatient.get(pid).push(log);
+    }
+
+    const conversations = [];
+    for (const [patientId, rows] of byPatient) {
+      // `logs` is already sorted newest-first, so rows[0] is the latest.
+      const latest = rows[0];
+      const isStaffRow = latest.source === 'staff';
+      const lastMessageText = isStaffRow
+        ? (latest.reply || '')
+        : (latest.message || latest.reply || '');
+
+      const latestEscalation = rows.find((r) => r.isEscalated);
+      const status = !latestEscalation
+        ? 'open'
+        : latestEscalation.resolvedByStaff
+          ? 'resolved'
+          : 'escalated';
+
+      const unreadCount = rows.filter(
+        (r) => r.source !== 'staff' && (r.message || '').trim() !== '' && !r.readByStaff
+      ).length;
+
+      conversations.push({
+        patientId,
+        patientName: latest.patient?.fullName || 'Patient',
+        lastMessage: lastMessageText,
+        lastMessageFromStaff: isStaffRow,
+        lastMessageAt: latest.createdAt,
+        status,
+        unreadCount,
+        escalationNote: latestEscalation?.escalationNote || '',
+        latestLogId: latestEscalation && !latestEscalation.resolvedByStaff ? latestEscalation._id : null,
+      });
+    }
+
+    conversations.sort((a, b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
+
+    return res.status(HttpStatus.OK).json({ success: true, data: conversations });
+  } catch (err) {
+    console.error('getConversations Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to load conversations.' });
+  }
+};
+
+// ── PUT /api/chatbot-admin/threads/:patientId/read ──────────────────────────
+// Marks every unread patient-authored message in this thread as seen —
+// called when staff opens a conversation, so its unread badge clears the
+// same way opening a thread in Messenger/WhatsApp does.
+const markThreadRead = async (req, res) => {
+  try {
+    const filter = {
+      patient: req.params.patientId,
+      source: { $ne: 'staff' },
+      readByStaff: false,
+    };
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+    }
+    const result = await ChatLog.updateMany(filter, { readByStaff: true });
+    return res.status(HttpStatus.OK).json({ success: true, updated: result.modifiedCount });
+  } catch (err) {
+    console.error('markThreadRead Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to mark thread as read.' });
+  }
+};
+
 const getThreadMessages = async (req, res) => {
   try {
     const logs = await ChatLog.find({ patient: req.params.patientId })
@@ -453,4 +561,6 @@ module.exports = {
   clearChatLogs,
   getThreadMessages,
   replyToThread,
+  getConversations,
+  markThreadRead,
 };

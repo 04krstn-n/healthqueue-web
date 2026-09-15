@@ -29,6 +29,13 @@ const ChatLogSchema = new mongoose.Schema(
     resolvedAt:      { type: Date,    default: null },
     resolvedNote:    { type: String,  default: '' },
     clinicId:        { type: mongoose.Schema.Types.ObjectId, ref: 'Clinic', default: null },
+
+    // Has staff seen this message yet? Only meaningful for patient-authored
+    // rows (message non-empty, source != 'staff') — used to drive the
+    // unread indicator on the Conversations list. Staff-authored rows
+    // (replies) don't need this; they're never "unread" from staff's own
+    // point of view.
+    readByStaff:     { type: Boolean, default: false },
   },
   { timestamps: true }
 );

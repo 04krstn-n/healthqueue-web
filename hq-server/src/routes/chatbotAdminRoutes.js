@@ -8,6 +8,8 @@ const {
   clearChatLogs,
   getThreadMessages,
   replyToThread,
+  getConversations,
+  markThreadRead,
 } = require('../controllers/chatbotAdminController');
 const { protect, authorizeRoles } = require('../middleware/auth');
 
@@ -42,6 +44,11 @@ router.get('/analytics', staffPlus, getAnalytics);
 // didn't exist before despite the client already calling them.
 router.get('/threads/:patientId/messages', staffPlus, getThreadMessages);
 router.post('/threads/:patientId/reply', staffPlus, replyToThread);
+router.put('/threads/:patientId/read', staffPlus, markThreadRead);
+
+// Messenger-style Conversations list — one row per patient, not per raw
+// message (see getConversations header comment).
+router.get('/conversations', staffPlus, getConversations);
 
 // Machine Learning Engine Management
 router.get('/rasa-status', staffPlus, getRasaStatus);
