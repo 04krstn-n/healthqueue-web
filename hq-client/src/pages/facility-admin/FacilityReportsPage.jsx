@@ -13,7 +13,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { dashboardApi } from '../../services/api'
+import { dashboardApi, analyticsApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import styles from './facility-admin.module.css'
 
@@ -30,6 +30,7 @@ export default function FacilityReportsPage() {
   const clinicId = user?.clinicId
 
   const [stats, setStats] = useState(null)
+  const [aiInsights, setAiInsights] = useState(null)
   const [loading, setLoading] = useState(true)
   const [range, setRange] = useState('Last 7 Days')
   const [error, setError] = useState('')
@@ -52,6 +53,23 @@ export default function FacilityReportsPage() {
       setError('Failed to load facility analytics.')
     } finally {
       setLoading(false)
+    }
+
+    // Separate, independent fetch for the OpenAI-backed narrative + linear
+    // forecast + reliability read. Deliberately isolated from the try/catch
+    // above — no OpenAI key configured, or any failure here, must never
+    // block the rest of the reports page from rendering. The "AI
+    // Recommendations" card below falls back to the plain rule-based
+    // dashboard insights (`stats.insights`) whenever this is null.
+    try {
+      // /api/analytics/ai-insights returns a flat { success, narrative,
+      // prescriptions, forecast, forecastReliability, metrics } body —
+      // not the { data: {...} } envelope dashboardApi.facility uses.
+      const aiResponse = await analyticsApi.aiInsights(clinicId)
+      const aiPayload = aiResponse?.data ?? null
+      setAiInsights(aiPayload?.success === false ? null : aiPayload)
+    } catch {
+      setAiInsights(null)
     }
   }, [clinicId])
 
@@ -447,9 +465,12 @@ export default function FacilityReportsPage() {
             AI Recommendations
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 14 }}>
-            Generated from real-time clinic data
+            {aiInsights ? 'Pre-trained AI (OpenAI) narrative, forecast & rule-based findings' : 'Generated from real-time clinic data'}
           </div>
-          {insights.length === 0 ? (
+
+          {aiInsights ? (
+            <AiInsightsPanel aiInsights={aiInsights} />
+          ) : insights.length === 0 ? (
             <EmptyState label="No insights yet — add queue entries to generate recommendations" />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -477,6 +498,97 @@ export default function FacilityReportsPage() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// ─── AI Recommendations panel: OpenAI narrative + light-forecasting
+// reliability read + rule-based findings, sourced from
+// GET /api/analytics/ai-insights (analyticsController.getAiInsights). The
+// forecast numbers (trend/slope/tomorrow) are deterministic — computed by
+// linearForecast() server-side; the "confidence" badge is the pre-trained
+// model's judgment layered on top of that math, not a replacement for it.
+const RELIABILITY_STYLES = {
+  high: { bg: '#DCFCE7', color: '#16A34A' },
+  moderate: { bg: '#FEF3C7', color: '#D97706' },
+  low: { bg: '#FEE2E2', color: '#DC2626' },
+}
+
+function AiInsightsPanel({ aiInsights }) {
+  const { narrative, forecast, forecastReliability, prescriptions = [] } = aiInsights
+  const relStyle = RELIABILITY_STYLES[forecastReliability?.confidence] || RELIABILITY_STYLES.low
+
+  const trendArrow =
+    forecast?.trend === 'increasing' ? '↑ trending up' :
+    forecast?.trend === 'decreasing' ? '↓ trending down' : '→ stable'
+
+  if (!narrative && !forecast && prescriptions.length === 0) {
+    return <EmptyState label="No insights yet — add queue entries to generate recommendations" />
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {narrative && (
+        <div style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+          {narrative}
+        </div>
+      )}
+
+      {forecast && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            background: '#F1F5F9',
+            borderRadius: 10,
+            padding: '10px 14px',
+          }}
+        >
+          <div style={{ fontSize: 12, color: 'var(--text)' }}>
+            <strong>Tomorrow's forecast:</strong> ~{forecast.tomorrow} patients ({trendArrow})
+          </div>
+          {forecastReliability && (
+            <span
+              title={forecastReliability.note}
+              style={{
+                fontSize: 10.5,
+                fontWeight: 700,
+                padding: '3px 10px',
+                borderRadius: 99,
+                whiteSpace: 'nowrap',
+                background: relStyle.bg,
+                color: relStyle.color,
+              }}
+            >
+              {forecastReliability.confidence?.toUpperCase()} CONFIDENCE
+            </span>
+          )}
+        </div>
+      )}
+
+      {prescriptions.map((rule, i) => {
+        const type = rule.severity === 'high' || rule.severity === 'medium' ? 'warning'
+          : rule.severity === 'low' ? 'success' : 'info'
+        const theme = INSIGHT_THEMES[type]
+        return (
+          <div
+            key={rule.code || i}
+            style={{ background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: 10, padding: '10px 14px' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+              <span style={{ fontSize: 13 }}>{theme.icon}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>
+                {rule.code ? rule.code.replace(/_/g, ' ') : 'Finding'}
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.5 }}>
+              {rule.finding}{rule.action ? ` — ${rule.action}` : ''}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

@@ -48,38 +48,119 @@ const generatePrescriptiveInsight = async (patientCoords, candidateClinics) => {
 };
 
 /**
- * Generates Peak Hours and Traffic Insights
+ * Generates a patient-facing "best time to visit" recommendation from
+ * ALREADY-COMPUTED historical data (see prescriptiveController.getBestTimeToQueue) —
+ * this only writes the sentence; it never invents the underlying numbers.
+ * Returns null (not a hardcoded fallback string) on missing key or API
+ * failure — the caller already has a real, data-driven template
+ * recommendation to fall back to, which is more honest than a generic
+ * "9-11 AM" line that might not even be true for this clinic.
  */
-const generatePeakHoursSummary = async (hourlyData) => {
+const generatePeakHoursSummary = async ({ clinicName, hourlyData, weeklyData, servicesData, peakBucket, quietHour }) => {
+  if (!OPENAI_API_KEY) return null;
+
+  try {
+    const busiestDay = weeklyData?.length
+      ? weeklyData.reduce((best, d) => (d.count > (best?.count || 0) ? d : best), null)
+      : null;
+    const quietestDay = weeklyData?.length
+      ? weeklyData.filter((d) => d.count > 0).reduce((best, d) => (d.count < (best?.count ?? Infinity) ? d : best), null)
+      : null;
+    const topLoadedService = servicesData?.find((s) => s.load === 'High');
+
+    const prompt = `You are a friendly assistant for ${clinicName}, a private health clinic in the Philippines.
+
+Using ONLY the data below, write a short, patient-friendly recommendation for the best time to visit this clinic.
+
+- Busiest hour: ${peakBucket?.label || 'not enough data'} (${peakBucket?.count ?? 0} patients, ~${peakBucket?.avgWait ?? 0} min avg wait)
+- Quietest hour: ${quietHour?.label || 'not enough data'} (${quietHour?.count ?? 0} patients, ~${quietHour?.avgWait ?? 0} min avg wait)
+- Busiest day: ${busiestDay?.label || 'not enough data'} (${busiestDay?.count ?? 0} patients)
+- Quietest day: ${quietestDay?.label || 'not enough data'} (${quietestDay?.count ?? 0} patients)
+- Busiest service: ${topLoadedService ? `${topLoadedService.name} (${topLoadedService.count} patients, ~${topLoadedService.avgWait} min avg wait)` : 'none flagged as high-load'}
+
+Write 2-3 sentences, plain conversational language, no bullet points, no headers. State ONLY what the data above supports — do not invent a day, hour, or service that isn't listed. If a field says "not enough data", don't mention it at all rather than guessing.`;
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.3,
+      max_tokens: 150,
+    });
+
+    return response.choices[0]?.message?.content?.trim() || null;
+  } catch (error) {
+    console.error('OpenAI Peak Hours Error:', error.message);
+    return null;
+  }
+};
+
+/**
+ * ─── Light forecasting: reliability read on the 7-day trend ────────────────
+ * Consumes the ALREADY-COMPUTED linear-regression forecast (see
+ * analyticsController.linearForecast — slope/intercept least-squares over
+ * the last 7 days) and judges whether that trend is a real, actionable
+ * pattern or just normal day-to-day noise given how little/inconsistent the
+ * underlying data is. This is deliberately NOT a second forecasting engine —
+ * it never sees raw QueueEntry records and is explicitly instructed not to
+ * restate or adjust the trend/slope/next-day numbers it's given, only to
+ * judge them. That judgment (a confidence label a plain slope can't express
+ * on its own) is the "light forecasting" contribution of the pre-trained
+ * model, layered on top of the deterministic math rather than replacing it.
+ *
+ * Always returns a usable result, even with no OpenAI key or on API
+ * failure — a heuristic fallback keeps the "confidence" field meaningful
+ * (and the calculation transparent/auditable) with zero AI involvement, so
+ * this degrades gracefully exactly like the rest of this file's functions.
+ */
+const assessForecastReliability = async ({ weekSeries = [], trend, slope, next, clinicName }) => {
+  const sampleTotal = weekSeries.reduce((s, v) => s + v, 0);
+  const nonZeroDays = weekSeries.filter((v) => v > 0).length;
+
+  const heuristicConfidence =
+    nonZeroDays >= 5 && sampleTotal >= 20 ? 'high' :
+    nonZeroDays >= 3 && sampleTotal >= 8 ? 'moderate' : 'low';
+  const heuristicNote = heuristicConfidence === 'low'
+    ? 'Not enough recent history yet to trust this trend — treat it as a rough signal only.'
+    : `Based on ${nonZeroDays} active day(s) this week (${sampleTotal} patients total).`;
+
   if (!OPENAI_API_KEY) {
-    return 'Peak hours are typically between 9:00 AM and 11:00 AM. Plan your visit after 1:00 PM for shorter wait times.';
+    return { confidence: heuristicConfidence, note: heuristicNote, source: 'heuristic' };
   }
 
   try {
-    const prompt = `
-      Analyze this daily hourly patient traffic data:
-      ${JSON.stringify(hourlyData)}
-      
-      Identify:
-      1. Peak busy window
-      2. Best/least crowded window to visit
-      3. A 1-sentence tip for patients.
-    `;
+    const prompt = `You are reviewing a 7-day patient volume trend for ${clinicName}, a private clinic in the Philippines.
+
+Daily patient counts (oldest to newest): ${weekSeries.join(', ')}
+Linear regression result (already computed — do not change these): trend = "${trend}", slope = ${slope} patients/day, tomorrow's projected count = ${next}
+
+Judge ONLY whether this trend looks like a real, consistent pattern worth acting on, or whether it's likely just normal day-to-day noise given how little or inconsistent the data is. Do NOT restate or alter the numbers above. Respond in exactly this format, nothing else:
+CONFIDENCE: <high|moderate|low>
+NOTE: <one sentence, plain language, no jargon>`;
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
+      max_tokens: 80,
     });
 
-    return response.choices[0].message.content.trim();
+    const text = response.choices[0]?.message?.content?.trim() || '';
+    const confMatch = text.match(/CONFIDENCE:\s*(high|moderate|low)/i);
+    const noteMatch = text.match(/NOTE:\s*(.+)/i);
+
+    return {
+      confidence: confMatch ? confMatch[1].toLowerCase() : heuristicConfidence,
+      note: noteMatch ? noteMatch[1].trim() : heuristicNote,
+      source: 'openai',
+    };
   } catch (error) {
-    console.error('OpenAI Peak Hours Error:', error.message);
-    return 'Traffic is highest in the morning. Visiting between 1:00 PM and 3:00 PM usually results in faster service.';
+    console.error('OpenAI Forecast Reliability Error:', error.message);
+    return { confidence: heuristicConfidence, note: heuristicNote, source: 'heuristic-fallback' };
   }
 };
 
 module.exports = {
   generatePrescriptiveInsight,
   generatePeakHoursSummary,
+  assessForecastReliability,
 };

@@ -239,33 +239,89 @@ const computeSuggestedWaitTime = async (clinicId, serviceId = null) => {
 };
 
 /**
- * ─── Priority-ratio queue ordering (item 4) ─────────────────────────────────
- * Interleaves priority and regular patients using a configurable ratio
- * (default 1 priority : 3 regular) instead of either (a) pure FIFO, which
- * ignores approved priority status entirely, or (b) "all priority patients
- * go first", which can starve regular patients indefinitely while priority
- * patients keep arriving. Within each group, order is still FIFO by
- * joinedAt — the ratio only decides how the two FIFO lines are interleaved.
+ * ─── Priority queue ordering: 1:3 interleave + 15-minute cutoff ────────────
+ * (Capstone requirement: "1:3 interleaving rule, not simply priority-first")
  *
- * `entries` should be the clinic's currently-`waiting` entries. Returns a
- * NEW array in serving order, with `queuePosition` (1-based) attached to
- * each entry object for display.
+ * This is NOT "sort priority patients to the front." A newly-joined patient
+ * may only jump ahead of patients who are STILL WAITING and were within 15
+ * minutes of the earliest such patient — beyond that window, queue order is
+ * preserved untouched (no cutting). `entries` is expected to already be
+ * filtered to `waiting` status only by the caller, which is what makes
+ * "never reorder a served/serving/completed patient" automatic: they simply
+ * never appear in this function's input at all.
+ *
+ * Algorithm (two phases):
+ *   1. Segment the chronologically-sorted waiting list into groups. Each
+ *      group's "anchor" is its own earliest member. A patient joins the
+ *      CURRENT group if they're within 15 minutes of that anchor (not the
+ *      immediately preceding patient) — otherwise they start a new group.
+ *      This is exactly "the 15-minute rule must be calculated using actual
+ *      queue-entry timestamps ... relative to the newly joined patient's
+ *      queue-entry time" from the spec, applied against the front of the
+ *      eligible window rather than a moving comparison.
+ *   2. Interleave 1:3 WITHIN each group (priority-FIFO merged with
+ *      regular-FIFO). Groups themselves stay in strict chronological order
+ *      relative to each other — a later group never moves ahead of an
+ *      earlier one, which is what "> 15 min → preserve existing order"
+ *      means at the group level.
+ *
+ * Traced against the spec's 4 worked examples (5-min priority arrival,
+ * already-served patient excluded, >15-min priority arrival, >15-min
+ * regular arrival) — all four reproduce exactly.
  */
+const PRIORITY_CUTOFF_MS = 15 * 60 * 1000;
+
 const orderQueueByPriorityRatio = (entries, ratio = { priority: 1, regular: 3 }) => {
-  const byJoinedAt = (a, b) => new Date(a.joinedAt) - new Date(b.joinedAt);
+  // Secondary tie-break on `createdAt` (or _id as a last resort) — two
+  // appointment patients checked in for the identical slot time both get
+  // the identical effectiveJoinedAt (see appointmentController's
+  // computeEffectiveJoinedAt), so joinedAt alone can't order them
+  // deterministically. createdAt reflects actual check-in order, which is
+  // what test case "multiple patients have appointments at the same time"
+  // needs — first to actually check in goes first.
+  const byJoinedAt = (a, b) => {
+    const diff = new Date(a.joinedAt) - new Date(b.joinedAt);
+    if (diff !== 0) return diff;
+    const createdDiff = new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+    if (createdDiff !== 0) return createdDiff;
+    return String(a._id).localeCompare(String(b._id));
+  };
+  const isPriority = (e) => e.priority || e.queueType === 'Priority';
+  const chronological = [...entries].sort(byJoinedAt);
 
-  const priorityQueue = entries.filter((e) => e.priority || e.queueType === 'Priority').sort(byJoinedAt);
-  const regularQueue = entries.filter((e) => !(e.priority || e.queueType === 'Priority')).sort(byJoinedAt);
+  // Phase 1 — group by 15-minute window from each group's own anchor.
+  const groups = [];
+  let currentGroup = [];
+  let anchorTime = null;
+  for (const entry of chronological) {
+    const t = new Date(entry.joinedAt).getTime();
+    if (currentGroup.length === 0) {
+      currentGroup = [entry];
+      anchorTime = t;
+    } else if (t - anchorTime <= PRIORITY_CUTOFF_MS) {
+      currentGroup.push(entry);
+    } else {
+      groups.push(currentGroup);
+      currentGroup = [entry];
+      anchorTime = t;
+    }
+  }
+  if (currentGroup.length) groups.push(currentGroup);
 
+  // Phase 2 — 1:3 interleave within each group; groups concatenate in
+  // chronological order.
   const pStep = Math.max(1, ratio?.priority || 1);
   const rStep = Math.max(1, ratio?.regular || 3);
-
   const ordered = [];
-  let pi = 0, ri = 0;
-  while (pi < priorityQueue.length || ri < regularQueue.length) {
-    for (let k = 0; k < pStep && pi < priorityQueue.length; k++) ordered.push(priorityQueue[pi++]);
-    for (let k = 0; k < rStep && ri < regularQueue.length; k++) ordered.push(regularQueue[ri++]);
-    if (pi >= priorityQueue.length && ri >= regularQueue.length) break;
+  for (const group of groups) {
+    const priorityQueue = group.filter(isPriority).sort(byJoinedAt);
+    const regularQueue = group.filter((e) => !isPriority(e)).sort(byJoinedAt);
+    let pi = 0, ri = 0;
+    while (pi < priorityQueue.length || ri < regularQueue.length) {
+      for (let k = 0; k < pStep && pi < priorityQueue.length; k++) ordered.push(priorityQueue[pi++]);
+      for (let k = 0; k < rStep && ri < regularQueue.length; k++) ordered.push(regularQueue[ri++]);
+      if (pi >= priorityQueue.length && ri >= regularQueue.length) break;
+    }
   }
 
   return ordered.map((e, idx) => {

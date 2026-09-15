@@ -23,6 +23,7 @@ const mongoose = require('mongoose');
 const QueueEntry = require('../models/QueueEntry');
 const Clinic = require('../models/Clinic');
 const { HttpStatus } = require('../config/constants');
+const { generatePeakHoursSummary } = require('../services/openaiService');
 
 const HOUR_LABELS = ['12 AM','1 AM','2 AM','3 AM','4 AM','5 AM','6 AM','7 AM','8 AM','9 AM','10 AM','11 AM',
   '12 PM','1 PM','2 PM','3 PM','4 PM','5 PM','6 PM','7 PM','8 PM','9 PM','10 PM','11 PM'];
@@ -44,6 +45,7 @@ const getBestTimeToQueue = async (req, res) => {
     const since = new Date();
     since.setDate(since.getDate() - 30);
     const clinicObjectId = new mongoose.Types.ObjectId(clinicId);
+    const clinic = await Clinic.findById(clinicObjectId).select('name').lean();
 
     // ── Hourly pattern (last 30 days, grouped by hour-of-day) ────────────────
     const hourlyAgg = await QueueEntry.aggregate([
@@ -131,12 +133,37 @@ const getBestTimeToQueue = async (req, res) => {
         ? `${quietHour.label} tends to be quietest here, with about ${quietHour.count} patients and a ${quietHour.avgWait}-minute average wait. Avoid ${peakBucket?.label || 'midday'} if you can — it's this clinic's busiest hour.`
         : 'Morning hours (8–10 AM) tend to have shorter wait times.';
 
+    // OpenAI writes a friendlier version of the SAME data above — it never
+    // gets to introduce a day/hour/service that the rule-based
+    // `recommendation` above didn't already establish (see the prompt in
+    // generatePeakHoursSummary). Skipped entirely when there isn't enough
+    // data yet (totalEntries === 0) — no point spending an API call
+    // dressing up "we don't have data," and this matches the "avoid
+    // unreliable predictions with insufficient data" requirement used
+    // elsewhere (queueHelpers.js's suggested-wait-time logic). Falls back
+    // to the plain `recommendation` above on any failure — this is a
+    // strictly better fallback than a hardcoded generic string, since
+    // it's still real data for THIS clinic.
+    let finalRecommendation = recommendation;
+    let recommendationSource = 'rule-based';
+    if (totalEntries > 0) {
+      const aiText = await generatePeakHoursSummary({
+        clinicName: clinic?.name || 'this clinic',
+        hourlyData, weeklyData, servicesData, peakBucket, quietHour,
+      });
+      if (aiText) {
+        finalRecommendation = aiText;
+        recommendationSource = 'ai';
+      }
+    }
+
     return res.status(HttpStatus.OK).json({
       success: true,
       avgWaitAll,
       peakLoad: peakBucket?.count || 0,
       peakLabel: peakBucket?.label || '10 AM',
-      recommendation,
+      recommendation: finalRecommendation,
+      recommendationSource,
       hourlyData,
       weeklyData,
       servicesData,

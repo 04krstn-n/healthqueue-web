@@ -121,16 +121,22 @@ const getChatLogs = async (req, res) => {
     // matching their own clinic depending on ordering/limit. Scope it the
     // same way getEscalatedLogs() already does.
     const filter = {};
-    // Patients' User accounts don't carry a clinicId, so a chat log only
-    // gets one if the patient app explicitly sent it — many legitimate
-    // logs have clinicId: null. A strict equality filter would silently
-    // hide those, which is very likely the actual cause of "staff not
-    // receiving logs" — so unassigned logs are included alongside the
-    // staff's own clinic instead of being excluded.
+    // STRICT clinic match — no null-clinic fallback. This used to include
+    // { clinicId: null } "so unassigned logs aren't hidden", but that
+    // meant every clinic's staff could see every OTHER patient's
+    // clinic-less chat (pre-clinic-selection FAQ/bot messages) too —
+    // exactly the cross-clinic leak this requirement calls out. The
+    // actual fix for "legitimate logs missing a clinicId" belongs at
+    // write time (see chatbotController.js's resolvePatientClinicId,
+    // which already does its best to attach one) — a facility's staff
+    // should simply never see a log with no resolvable clinic; that's
+    // not their clinic's concern to begin with. Only super_admin (no
+    // req.user.clinicId, no explicit query filter) sees unassigned rows,
+    // via the unfiltered `else` fall-through below.
     if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
-      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+      filter.clinicId = req.user.clinicId;
     } else if (req.query.clinicId) {
-      filter.$or = [{ clinicId: req.query.clinicId }, { clinicId: null }];
+      filter.clinicId = req.query.clinicId;
     }
     const logs = await ChatLog.find(filter)
       .populate('patient', 'fullName email')
@@ -279,13 +285,16 @@ const getEscalatedLogs = async (req, res) => {
   try {
     const { resolved } = req.query;
     const filter = { isEscalated: true };
-    // Same reasoning as getChatLogs: don't strictly exclude logs with no
-    // clinicId — a patient's account isn't clinic-scoped, so this equality
-    // filter was very likely hiding real escalations from staff.
+    // STRICT clinic match — see getChatLogs' comment for why the old
+    // null-clinic fallback was a cross-clinic leak, not a fix. Also worth
+    // noting: an ESCALATED log can only exist with a real clinicId in the
+    // first place (chatbotController.handleMessage blocks escalation
+    // entirely when no clinic can be resolved), so this filter should
+    // essentially never even need to exclude anything here in practice.
     if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
-      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+      filter.clinicId = req.user.clinicId;
     } else if (req.query.clinicId) {
-      filter.$or = [{ clinicId: req.query.clinicId }, { clinicId: null }];
+      filter.clinicId = req.query.clinicId;
     }
     if (resolved === 'true') filter.resolvedByStaff = true;
     if (resolved === 'false') filter.resolvedByStaff = false;
@@ -302,13 +311,16 @@ const getEscalatedLogs = async (req, res) => {
 };
 
 // DELETE /api/chatbot-admin/logs — Clears chat logs for the staff's clinic.
-// Scoped the same way getChatLogs/getEscalatedLogs are (clinicId match OR
-// no clinicId set, since a patient's account isn't clinic-scoped) so this
-// can never wipe another clinic's conversation history. Restricted to
-// facility_admin/super_admin (not plain staff) since this is a permanent,
-// irreversible bulk delete — the tablet UI must still confirm with the
-// user before calling this; this endpoint is the actual enforcement, not
-// a substitute for that confirmation.
+// STRICT clinicId match only — this used to also delete every clinicId:
+// null log system-wide (via an $or fallback), which meant Clinic A
+// clearing its own chat history could silently delete Clinic B patients'
+// not-yet-clinic-assigned messages too. For a permanent, irreversible
+// bulk delete, "might also delete someone else's data" is a much worse
+// failure mode than "might leave a few unassigned rows behind" — so this
+// errs strict. Restricted to facility_admin/super_admin (not plain
+// staff); the tablet UI must still confirm with the user before calling
+// this — this endpoint is the actual enforcement, not a substitute for
+// that confirmation.
 const clearChatLogs = async (req, res) => {
   try {
     const clinicId = req.user.clinicId || req.query.clinicId;
@@ -319,9 +331,7 @@ const clearChatLogs = async (req, res) => {
       });
     }
 
-    const result = await ChatLog.deleteMany({
-      $or: [{ clinicId }, { clinicId: null }],
-    });
+    const result = await ChatLog.deleteMany({ clinicId });
 
     await logAction({
       actor: req.user,
@@ -373,10 +383,11 @@ const clearChatLogs = async (req, res) => {
 const getConversations = async (req, res) => {
   try {
     const filter = {};
+    // STRICT clinic match — see getChatLogs' comment.
     if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
-      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+      filter.clinicId = req.user.clinicId;
     } else if (req.query.clinicId) {
-      filter.$or = [{ clinicId: req.query.clinicId }, { clinicId: null }];
+      filter.clinicId = req.query.clinicId;
     }
     // Only conversations that actually have a patient attached — a handful
     // of very old/anonymous rows predate the patient field being required
@@ -450,8 +461,9 @@ const markThreadRead = async (req, res) => {
       source: { $ne: 'staff' },
       readByStaff: false,
     };
+    // STRICT clinic match — see getChatLogs' comment.
     if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
-      filter.$or = [{ clinicId: req.user.clinicId }, { clinicId: null }];
+      filter.clinicId = req.user.clinicId;
     }
     const result = await ChatLog.updateMany(filter, { readByStaff: true });
     return res.status(HttpStatus.OK).json({ success: true, updated: result.modifiedCount });
@@ -463,7 +475,24 @@ const markThreadRead = async (req, res) => {
 
 const getThreadMessages = async (req, res) => {
   try {
-    const logs = await ChatLog.find({ patient: req.params.patientId })
+    // Was completely unscoped by clinic before this fix — ANY staff
+    // account, from ANY clinic, could read ANY patient's full thread just
+    // by knowing (or guessing/incrementing) their patientId in the URL.
+    // This is the actual endpoint the tablet's conversation panel calls,
+    // so this was a real, exploitable cross-clinic read — not just a
+    // frontend filtering gap.
+    const filter = { patient: req.params.patientId };
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      filter.clinicId = req.user.clinicId;
+    } else if (req.query.clinicId) {
+      filter.clinicId = req.query.clinicId;
+    }
+    // super_admin with neither req.user.clinicId nor an explicit
+    // ?clinicId= falls through with no clinic filter at all — intentional
+    // global visibility, per "Super Admin may have access to global
+    // escalation information where appropriate."
+
+    const logs = await ChatLog.find(filter)
       .sort({ createdAt: 1 })
       .limit(200);
     return res.status(HttpStatus.OK).json({ success: true, data: logs });
@@ -489,6 +518,28 @@ const replyToThread = async (req, res) => {
     }
     const patientId = req.params.patientId;
     const replyText = text.trim();
+
+    // Authorization check — this used to be missing entirely, meaning any
+    // staff account could reply to ANY patient (by patientId) regardless
+    // of whether that patient had ever interacted with the staff member's
+    // clinic. A reply is only allowed if this patient already has at
+    // least one conversation on record with THIS staff member's clinic —
+    // which also naturally blocks replying to a brand-new/unknown
+    // patientId a staff member might try to guess. super_admin (no
+    // req.user.clinicId) is exempt, matching the global-visibility
+    // pattern used elsewhere in this file.
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      const hasConversation = await ChatLog.exists({
+        patient: patientId,
+        clinicId: req.user.clinicId,
+      });
+      if (!hasConversation) {
+        return res.status(HttpStatus.FORBIDDEN).json({
+          success: false,
+          message: 'This patient has no conversation with your clinic.',
+        });
+      }
+    }
 
     const log = await ChatLog.create({
       patient: patientId,

@@ -17,6 +17,7 @@ const Clinic = require('../models/Clinic');
 const InsightsLog = require('../models/InsightsLog');
 const mongoose = require('mongoose');
 const { HttpStatus, OPENAI_API_KEY } = require('../config/config');
+const { assessForecastReliability } = require('../services/openaiService');
 
 const toId = (id) => new mongoose.Types.ObjectId(String(id));
 
@@ -250,6 +251,21 @@ const getAiInsights = async (req, res) => {
       console.warn('[analytics] OpenAI narrative failed:', err.message);
     }
 
+    // ── 3b. Light forecasting: reliability read on the trend ────────────
+    // Only meaningful once linearForecast() actually produced a result
+    // (needs >=2 days of series data) — see openaiService.assessForecastReliability
+    // for why this is a judgment on top of the math, not a second forecast.
+    let forecastReliability = null;
+    if (forecast) {
+      try {
+        forecastReliability = await assessForecastReliability({
+          weekSeries, trend: forecast.trend, slope: forecast.slope, next: forecast.next, clinicName: clinic.name,
+        });
+      } catch (err) {
+        console.warn('[analytics] forecastReliability failed:', err.message);
+      }
+    }
+
     // ── 4. Save to InsightsLog (Required for Thesis Quality Evaluation) ─
     if (req.user) {
       await InsightsLog.create({
@@ -278,6 +294,7 @@ const getAiInsights = async (req, res) => {
         tomorrow: forecast.next,
         series: weekSeries,
       } : null,
+      forecastReliability,
       metrics: {
         todayPatients, activeQueue, completedToday,
         todayAppointments, avgWaitTime, completionRate,

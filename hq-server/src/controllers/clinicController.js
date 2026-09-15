@@ -105,6 +105,20 @@ const createClinic = async (req, res) => {
 // PUT /api/clinics/:id — Update clinic
 const updateClinic = async (req, res) => {
   try {
+    // Facility admins can hit this route (see clinicRoutes.js) but were
+    // never actually checked against WHICH clinic they were editing — a
+    // facility_admin for Clinic A could call PUT /clinics/<Clinic B's id>
+    // and successfully rewrite Clinic B's name, address, service
+    // durations, priority ratio, etc. super_admin is unrestricted, as
+    // intended.
+    if (req.user.role === 'facility_admin' &&
+        req.user.clinicId?.toString() !== req.params.id) {
+      return res.status(HttpStatus.FORBIDDEN).json({
+        success: false,
+        message: 'You can only update your own clinic.',
+      });
+    }
+
     const payload = { ...req.body };
     const addressChanged = payload.address !== undefined || payload.city !== undefined;
     const hasExplicitCoords =
