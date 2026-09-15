@@ -16,6 +16,7 @@ import {
 import { dashboardApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import AuditLogPage from './AuditLogPage'
+import NearbyClinicsPanel from '../../components/shared/NearbyClinicsPanel'
 import styles from './facility-admin.module.css'
 
 export default function FacilityDashboard() {
@@ -56,7 +57,6 @@ export default function FacilityDashboard() {
     queueByService,
     pieData,
     weeklyTrend,
-    recentActivity,
   } = useMemo(() => {
     const s = stats || {}
 
@@ -152,34 +152,7 @@ export default function FacilityDashboard() {
       count: w.count || 0,
     }))
 
-    // Activity Log
-    const recentActivity = (s.recentActivity || []).map((a) => {
-      let action = a.status || '—'
-      let color = '#D97706'
-
-      if (a.status === 'waiting') {
-        action = 'Checked in'
-        color = '#D97706'
-      } else if (a.status === 'serving') {
-        action = 'Consultation started'
-        color = '#2563EB'
-      } else if (a.status === 'completed' || a.status === 'done') {
-        action = 'Completed'
-        color = '#16A34A'
-      }
-
-      return {
-        name: a.patientName || 'Anonymous',
-        action,
-        service: a.serviceName || '',
-        time: a.joinedAt
-          ? new Date(a.joinedAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })
-          : '',
-        color,
-      }
-    })
-
-    return { kpis, queueByService, pieData, weeklyTrend, recentActivity }
+    return { kpis, queueByService, pieData, weeklyTrend }
   }, [stats])
 
   if (view === 'audit-log') {
@@ -341,55 +314,8 @@ export default function FacilityDashboard() {
           )}
         </div>
 
-        {/* Recent Activity */}
-        <div className="card" style={{ padding: 20 }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 14,
-            }}
-          >
-            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>Recent Activity</span>
-            <button
-              className="btn btn-outline"
-              style={{ fontSize: 11, padding: '3px 8px' }}
-              onClick={loadDashboard}
-              disabled={loading}
-            >
-              {loading ? '…' : 'Refresh'}
-            </button>
-          </div>
-          {recentActivity.length === 0 ? (
-            <EmptyState loading={loading} label="No activity recorded today" />
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {recentActivity.map((a, index) => (
-                <div key={index} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <div
-                    style={{
-                      width: 10,
-                      height: 10,
-                      borderRadius: '50%',
-                      background: a.color,
-                      marginTop: 3,
-                      flexShrink: 0,
-                    }}
-                  />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{a.name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                      {a.action}
-                      {a.service ? ` — ${a.service}` : ''}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{a.time}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Nearby Clinics — real-time status for referral decisions */}
+        <NearbyClinicsPanel />
       </div>
     </div>
   )

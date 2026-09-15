@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   getClinics, getClinicDirectory, getClinic,
   createClinic, updateClinic, deleteClinic, getRecommendations,
+  getClinicNetworkStatus,
 } = require('../controllers/clinicController');
 const { protect, authorizeRoles } = require('../middleware/auth');
 
@@ -12,6 +13,8 @@ router.get('/recommend', getRecommendations);
 
 // Authenticated endpoints
 router.use(protect);
+
+router.get('/network-status', authorizeRoles('facility_admin', 'super_admin'), getClinicNetworkStatus);
 
 router
   .route('/')

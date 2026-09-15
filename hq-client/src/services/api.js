@@ -74,6 +74,7 @@ export const clinicsApi = {
   update: (id, data) => api.put(`/api/clinics/${id}`, data).then(r => unwrap(r, null)),
   delete: (id) => api.delete(`/api/clinics/${id}`),
   directory: () => api.get('/api/clinics/directory').then(r => unwrap(r, [])),
+  networkStatus: () => api.get('/api/clinics/network-status').then(r => unwrap(r, [])),
   recommend: (params) => api.get('/api/clinics/recommend', { params }),
 }
 

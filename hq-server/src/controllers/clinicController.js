@@ -23,7 +23,7 @@ const getClinics = async (req, res) => {
 const getClinicDirectory = async (req, res) => {
   try {
     const clinics = await Clinic.find({ isActive: true, status: { $ne: 'closed' } })
-      .select('name address city latitude longitude services contactNumber status queueLength currentWaitingTime baseWaitTimePerPerson peakHours')
+      .select('name address city latitude longitude services contactNumber status queueLength currentWaitingTime baseWaitTimePerPerson maxQueueCapacity peakHours')
       .sort({ name: 1 });
 
     return res.status(HttpStatus.OK).json({ success: true, data: clinics });
@@ -255,6 +255,51 @@ const getRecommendations = async (req, res) => {
   }
 };
 
+// GET /api/clinics/network-status — Real-time peer-clinic status for
+// Facility Admin referral decisions. Distinct from getClinicDirectory
+// (public, patient-facing, no distance/capacity computed) — this is
+// authenticated, computes distance from the REQUESTING clinic server-side
+// (instead of the client doing Haversine math itself), and flags capacity
+// so the UI doesn't have to derive it. Aggregate fields only — no patient
+// or individual queue-entry data crosses clinics here, by design.
+const getClinicNetworkStatus = async (req, res) => {
+  try {
+    // facility_admin/staff are scoped to their own clinic; super_admin has
+    // none, so it may pass ?clinicId= to view the network from any clinic's
+    // vantage point (or omit it to just get all clinics, unsorted by distance).
+    const requestingClinicId = req.user.clinicId || req.query.clinicId || null;
+
+    const [ownClinic, clinics] = await Promise.all([
+      requestingClinicId ? Clinic.findById(requestingClinicId).select('latitude longitude').lean() : null,
+      Clinic.find({ isActive: true, status: { $ne: 'closed' }, _id: { $ne: requestingClinicId } })
+        .select('name address city latitude longitude status queueLength currentWaitingTime baseWaitTimePerPerson maxQueueCapacity')
+        .lean(),
+    ]);
+
+    const network = clinics.map((c) => {
+      const distanceKm = ownClinic
+        ? calculateDistance(ownClinic.latitude || 0, ownClinic.longitude || 0, c.latitude || 0, c.longitude || 0)
+        : null;
+      return {
+        ...c,
+        distanceKm,
+        atCapacity: c.maxQueueCapacity ? c.queueLength >= c.maxQueueCapacity : false,
+      };
+    });
+
+    network.sort((a, b) => {
+      if (a.distanceKm == null) return 1;
+      if (b.distanceKm == null) return -1;
+      return a.distanceKm - b.distanceKm;
+    });
+
+    return res.status(HttpStatus.OK).json({ success: true, data: network });
+  } catch (err) {
+    console.error('getClinicNetworkStatus Error:', err.message);
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to fetch clinic network status.' });
+  }
+};
+
 module.exports = {
   getClinics,
   getClinicDirectory,
@@ -263,4 +308,5 @@ module.exports = {
   updateClinic,
   deleteClinic,
   getRecommendations,
+  getClinicNetworkStatus,
 };
