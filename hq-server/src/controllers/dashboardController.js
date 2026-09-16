@@ -17,18 +17,23 @@ const todayRange = () => {
   return { $gte: start, $lte: end };
 };
 
-const getWeeklyTrend = async (clinicId) => {
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
+const getWeeklyTrend = async (clinicId, days = 7) => {
+  const trend = [];
+  for (let i = days - 1; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
     const end = new Date(d); end.setHours(23, 59, 59, 999);
-    const label = d.toLocaleDateString('en-PH', { weekday: 'short' });
+    // Weekday names ("Wed") only stay unambiguous within a single week —
+    // past 7 days they'd repeat (two different Wednesdays both just say
+    // "Wed"), so switch to a short date once the window is longer.
+    const label = days <= 7
+      ? d.toLocaleDateString('en-PH', { weekday: 'short' })
+      : d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
     const filter = { joinedAt: { $gte: d, $lte: end } };
     if (clinicId) filter.clinic = toId(clinicId);
     const count = await QueueEntry.countDocuments(filter);
-    days.push({ day: label, count });
+    trend.push({ day: label, count });
   }
-  return days;
+  return trend;
 };
 
 // GET /api/dashboard/super-admin
@@ -74,6 +79,12 @@ const getFacilityStats = async (req, res) => {
     const { clinicId } = req.query;
     if (!clinicId) return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'clinicId is required.' });
 
+    // Defaults to 7 (unchanged for FacilityDashboard/QueueOversightPage,
+    // which never pass this) — FacilityReportsPage's date-range selector
+    // is the only current caller that sets it explicitly. Clamped to a
+    // sane range rather than trusting an arbitrary client-supplied number.
+    const days = Math.min(Math.max(Number(req.query.days) || 7, 1), 90);
+
     const cid = toId(clinicId);
     const clinic = await Clinic.findById(cid);
 
@@ -94,7 +105,7 @@ const getFacilityStats = async (req, res) => {
     const avgWaitTime = Math.round(waitAgg[0]?.avg ?? 0);
 
     // Weekly trend
-    const weeklyTrend = await getWeeklyTrend(clinicId);
+    const weeklyTrend = await getWeeklyTrend(clinicId, days);
 
     // Hourly breakdown
     const hourlyAgg = await QueueEntry.aggregate([

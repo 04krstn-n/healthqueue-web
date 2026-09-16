@@ -36,6 +36,8 @@ export default function FacilityReportsPage() {
   const [error, setError] = useState('')
 
   // ─── Data Loading ────────────────────────────────────────────────────────────
+  const rangeDays = range === 'Last 30 Days' ? 30 : 7
+
   const loadReports = useCallback(async () => {
     if (!clinicId) {
       setLoading(false)
@@ -46,7 +48,7 @@ export default function FacilityReportsPage() {
     setError('')
 
     try {
-      const response = await dashboardApi.facility(clinicId)
+      const response = await dashboardApi.facility(clinicId, rangeDays)
       const payload = response?.data?.data ?? response?.data ?? null
       setStats(payload)
     } catch {
@@ -61,6 +63,10 @@ export default function FacilityReportsPage() {
     // block the rest of the reports page from rendering. The "AI
     // Recommendations" card below falls back to the plain rule-based
     // dashboard insights (`stats.insights`) whenever this is null.
+    //
+    // Not affected by rangeDays — getAiInsights's own forecast always
+    // looks at its own fixed 7-day window server-side (linearForecast),
+    // independent of the trend chart's selected range here.
     try {
       // /api/analytics/ai-insights returns a flat { success, narrative,
       // prescriptions, forecast, forecastReliability, metrics } body —
@@ -71,7 +77,7 @@ export default function FacilityReportsPage() {
     } catch {
       setAiInsights(null)
     }
-  }, [clinicId])
+  }, [clinicId, rangeDays])
 
   useEffect(() => {
     loadReports()
@@ -291,7 +297,7 @@ export default function FacilityReportsPage() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                 <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
                 <Area

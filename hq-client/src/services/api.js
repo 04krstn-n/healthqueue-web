@@ -67,7 +67,7 @@ export const healthApi = {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export const dashboardApi = {
   superAdmin: () => api.get('/api/dashboard/super-admin'),
-  facility: (clinicId) => api.get('/api/dashboard/facility', { params: { clinicId } }),
+  facility: (clinicId, days) => api.get('/api/dashboard/facility', { params: { clinicId, days } }),
 }
 
 // ── Clinics ───────────────────────────────────────────────────────────────────
