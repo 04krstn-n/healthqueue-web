@@ -66,6 +66,14 @@ const UserSchema = new mongoose.Schema(
     otpExpires: { type: Date,    default: null },
     isVerified: { type: Boolean, default: false },
     isActive:   { type: Boolean, default: true },
+    // Set true whenever an admin creates this account on someone else's
+    // behalf (super_admin creating a facility_admin, facility_admin
+    // creating staff) — see userController.createUser. Forces the web
+    // ProtectedRoute / tablet login gate to route straight to the
+    // change-password screen before anything else, so a handed-over
+    // credential can't stay in use indefinitely. Cleared by
+    // authController.changePassword or resetPassword.
+    mustChangePassword: { type: Boolean, default: false },
     gender: { 
     type: String, 
     enum: ['Male', 'Female', 'Other', 'Prefer not to say'], 
@@ -105,6 +113,7 @@ UserSchema.methods.toSafeObject = function () {
     clinicId:   this.clinicId,
     isVerified: this.isVerified,
     isActive:   this.isActive,
+    mustChangePassword: this.mustChangePassword,
     gender:     this.gender,
     specialization: this.specialization,
     createdAt:  this.createdAt,

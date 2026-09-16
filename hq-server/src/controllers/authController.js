@@ -481,6 +481,7 @@ const login = async (req, res) => {
         role: user.role,
         clinicId: user.clinicId || null,
         isVerified: user.isVerified,
+        mustChangePassword: user.mustChangePassword,
         dateOfBirth: patientProfile?.dateOfBirth || null,
         gender: patientProfile?.gender || '',
         age: patientProfile?.age ?? null,
@@ -644,6 +645,14 @@ const resetPassword = async (req, res) => {
       });
     }
 
+    const passwordProblems = validatePasswordStrength(newPassword);
+    if (passwordProblems.length > 0) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `Password must have ${passwordProblems.join(', ')}.`,
+      });
+    }
+
     const reset = await PasswordReset.findById(resetId).select('+resetToken');
     if (!reset || !reset.resetToken) {
       return res.status(HttpStatus.BAD_REQUEST).json({
@@ -673,6 +682,11 @@ const resetPassword = async (req, res) => {
     }
 
     user.password = newPassword; // pre-save hook hashes it
+    // Forgot-password is also a valid way to satisfy a forced first-login
+    // change (an admin/staff who forgot their handed-over temp password
+    // shouldn't be stuck) — clear the flag here too, not just in
+    // userController.changePassword.
+    user.mustChangePassword = false;
     await user.save();
 
     // Fully consumed — remove rather than just flag, so nothing lingers
@@ -728,6 +742,7 @@ const getMe = async (req, res) => {
         clinicName: user.clinicId?.name || null,
         isVerified: user.isVerified,
         isActive: user.isActive,
+        mustChangePassword: user.mustChangePassword,
         dateOfBirth: patientProfile?.dateOfBirth || null,
         gender: patientProfile?.gender || '',
         age: patientProfile?.age ?? null,
@@ -776,4 +791,6 @@ module.exports = {
   forgotPassword,
   verifyResetOtp,
   resetPassword,
+  validatePasswordStrength,
+  normalizePhone,
 };

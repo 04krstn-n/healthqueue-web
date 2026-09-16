@@ -71,8 +71,22 @@ export function AuthProvider({ children }) {
     setUser(null)
   }
 
+  // Called by ChangePasswordPage right after userController.changePassword
+  // succeeds server-side. Patches local state + cache directly rather than
+  // re-fetching via authApi.me() — we already know the result (the server
+  // call that just succeeded is what cleared it), so a second round-trip
+  // would just be redundant latency before the gate lifts.
+  const clearMustChangePassword = () => {
+    setUser((prev) => {
+      if (!prev) return prev
+      const updated = { ...prev, mustChangePassword: false }
+      sessionStorage.setItem('hq_user', JSON.stringify(updated))
+      return updated
+    })
+  }
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, clearMustChangePassword }}>
       {children}
     </AuthContext.Provider>
   )

@@ -2,12 +2,20 @@ import { useEffect, lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import AppLayout from './components/layout/AppLayout'
+import AppErrorBoundary from './components/shared/AppErrorBoundary'
 
 // Public
 import LandingPage from './public/LandingPage'
 
 // Auth
 import LoginPage from './pages/auth/LoginPage'
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage'
+
+// Shared error pages — not lazy-loaded, since they need to be available
+// immediately even if a lazy chunk itself fails to load
+import NotFoundPage from './pages/shared/NotFoundPage'
+import ForbiddenPage from './pages/shared/ForbiddenPage'
+import ChangePasswordPage from './pages/shared/ChangePasswordPage'
 
 // Facility Admin — lazy-loaded so each page's JS only downloads when visited
 const FacilityDashboard  = lazy(() => import('./pages/facility-admin/FacilityDashboard'))
@@ -47,7 +55,17 @@ function ProtectedRoute({ children, allowedRoles }) {
     </div>
   )
   if (!user) return <Navigate to="/login" replace />
-  if (allowedRoles && !allowedRoles.includes(user.role)) return <Navigate to="/login" replace />
+  // Logged in, but wrong role for this route — distinct from "not logged
+  // in at all" (above), which still goes to /login. This used to redirect
+  // here too, silently, which was misleading for an authenticated user who
+  // simply hit the wrong section.
+  if (allowedRoles && !allowedRoles.includes(user.role)) return <ForbiddenPage />
+  // Account was just created by an admin (userController.createUser) with
+  // a system-generated temp password — blocks every route under this
+  // guard (dashboard, queue, everything) until they set their own.
+  // Checked after the role check above so a wrong-role visit still shows
+  // Forbidden rather than the change-password screen.
+  if (user.mustChangePassword) return <ChangePasswordPage />
   return children
 }
 
@@ -55,7 +73,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <AppErrorBoundary>
+          <AppRoutes />
+        </AppErrorBoundary>
       </AuthProvider>
     </BrowserRouter>
   )
@@ -74,6 +94,7 @@ function AppRoutes() {
       <Routes>
         {/* Public */}
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
 
         {/* Facility Admin */}
         <Route
@@ -128,7 +149,7 @@ function AppRoutes() {
               : <LandingPage />
           }
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Suspense>
   )

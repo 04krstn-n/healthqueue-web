@@ -123,7 +123,11 @@ export default function LoginPage() {
               <input type="checkbox" />
               <span>Remember me</span>
             </label>
-            <button type="button" className={styles.forgot}>
+            <button
+              type="button"
+              className={styles.forgot}
+              onClick={() => navigate('/forgot-password')}
+            >
               Forgot password?
             </button>
           </div>

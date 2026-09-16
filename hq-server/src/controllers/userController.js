@@ -2,11 +2,43 @@
  * User Controller — user management (admin use)
  */
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Staff = require('../models/Staff');
 const { logAction } = require('../utils/auditLog');
+const { validatePasswordStrength, normalizePhone } = require('./authController');
+
+// Generates a random one-time password for accounts an admin creates on
+// someone else's behalf (super_admin -> facility_admin, facility_admin ->
+// staff). Guaranteed to satisfy the same strength rule
+// authController.validatePasswordStrength enforces (8+ chars, upper,
+// lower, digit, special) — built from one guaranteed character of each
+// class plus random fill, then shuffled so the required characters aren't
+// always in the same position. The admin sees this once, in the create
+// response, to hand over to the account's owner; mustChangePassword forces
+// them to replace it before doing anything else.
+const generateTempPassword = () => {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const special = '!@#$%^&*';
+  const all = upper + lower + digits + special;
+
+  const pick = (chars) => chars[crypto.randomInt(chars.length)];
+  const required = [pick(upper), pick(lower), pick(digits), pick(special)];
+  const fill = Array.from({ length: 8 }, () => pick(all));
+  const chars = [...required, ...fill];
+
+  // Fisher-Yates shuffle using crypto.randomInt (avoids Math.random for
+  // anything password-related)
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+};
 
 // GET /api/users
 const getUsers = async (req, res) => {
@@ -48,11 +80,21 @@ const getUser = async (req, res) => {
 
 // POST /api/users
 const createUser = async (req, res) => {
-  const { fullName, email, phone, password, role, clinicId, gender, specialization } = req.body;
+  const { fullName, email, phone, role, clinicId, gender, specialization } = req.body;
 
-  if (!fullName || !email || !password || !role) {
-    return res.status(400).json({ message: 'fullName, email, password, and role are required.' });
+  if (!fullName || !email || !role) {
+    return res.status(400).json({ message: 'fullName, email, and role are required.' });
   }
+
+  // Phone used to be optional here, which silently broke Forgot Password
+  // for any admin/staff account created without one — forgotPassword()
+  // looks accounts up by phone, so an account with none simply can't use
+  // it. Required now so every admin/staff account this endpoint creates
+  // actually has a working recovery path.
+  if (!phone || !phone.trim()) {
+    return res.status(400).json({ message: 'A phone number is required (used for Forgot Password OTP verification).' });
+  }
+  const normalizedPhone = normalizePhone(phone);
 
   const targetClinic = req.user.role === 'facility_admin' ? req.user.clinicId : (clinicId || null);
 
@@ -79,14 +121,25 @@ const createUser = async (req, res) => {
       return res.status(409).json({ message: 'Email already registered.' });
     }
 
-    // 1. Create User
+    const existingPhone = await User.findOne({ phone: normalizedPhone }).session(session);
+    if (existingPhone) {
+      if (session) await session.abortTransaction();
+      return res.status(409).json({ message: 'This phone number is already in use by another account.' });
+    }
+
+    // 1. Create User — password is always generated here (never trusted
+    // from the client) so it can't be left as something predictable like
+    // "Staff@123"; mustChangePassword forces it to be replaced before the
+    // account can be used for anything else.
+    const tempPassword = generateTempPassword();
     const [user] = await User.create(
       [
         {
           fullName: fullName.trim(),
           email: normalizedEmail,
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
-          password,
+          phone: normalizedPhone,
+          password: tempPassword,
+          mustChangePassword: true,
           role,
           clinicId: targetClinic,
           isVerified: true,
@@ -130,6 +183,12 @@ const createUser = async (req, res) => {
     return res.status(201).json({
       success: true,
       data: user.toSafeObject(),
+      // Shown once, here only — never logged, never stored anywhere but
+      // the (already-hashed) User document. The creating admin is
+      // responsible for handing this to the account's owner out of band;
+      // it can't be retrieved again after this response (they'd need to
+      // use forgot-password instead if it's lost before first login).
+      tempPassword,
     });
   } catch (err) {
     if (session) await session.abortTransaction();
@@ -295,8 +354,10 @@ const changePassword = async (req, res) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ message: 'Current and new password are required.' });
     }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'New password must be at least 6 characters.' });
+
+    const passwordProblems = validatePasswordStrength(newPassword);
+    if (passwordProblems.length > 0) {
+      return res.status(400).json({ message: `Password must have ${passwordProblems.join(', ')}.` });
     }
 
     const user = await User.findById(req.user._id).select('+password');
@@ -305,9 +366,27 @@ const changePassword = async (req, res) => {
     const match = await bcrypt.compare(currentPassword, user.password);
     if (!match) return res.status(401).json({ message: 'Current password is incorrect.' });
 
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ message: 'New password must be different from your current password.' });
+    }
+
     // Directly assign password to trigger Mongoose pre-save hashing
     user.password = newPassword;
+    // Satisfies the forced first-login change (see userController.createUser
+    // and the mustChangePassword gate in the web/tablet clients) — also a
+    // normal no-op for anyone changing their password voluntarily
+    // afterward, since it's already false by then.
+    user.mustChangePassword = false;
     await user.save();
+
+    await logAction({
+      actor: req.user,
+      action: 'change_password',
+      targetType: 'User',
+      targetId: user._id,
+      targetLabel: user.fullName,
+      clinicId: user.clinicId,
+    }).catch(() => {});
 
     return res.json({ message: 'Password changed successfully.' });
   } catch (err) {

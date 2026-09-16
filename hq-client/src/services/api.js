@@ -53,6 +53,10 @@ export const authApi = {
   login: (email, password) => api.post('/api/auth/login', { email, password }),
   me: () => api.get('/api/auth/me'),
   logout: () => api.post('/api/auth/logout'),
+  forgotPassword: (phone) => api.post('/api/auth/forgot-password', { phone }),
+  verifyResetOtp: (resetId, otp) => api.post('/api/auth/verify-reset-otp', { resetId, otp }),
+  resetPassword: (resetId, resetToken, newPassword) =>
+    api.post('/api/auth/reset-password', { resetId, resetToken, newPassword }),
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -94,6 +98,9 @@ export const usersApi = {
 
   deactivate: (id) =>
     api.delete(`/api/users/${id}`),
+
+  changePassword: (currentPassword, newPassword) =>
+    api.put('/api/users/change-password', { currentPassword, newPassword }),
 }
 
 // ── Staff ─────────────────────────────────────────────────────────────────────
