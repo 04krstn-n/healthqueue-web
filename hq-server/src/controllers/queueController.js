@@ -25,6 +25,67 @@ const todayRange = () => {
 };
 
 /**
+ * Notifies patients as they cross into the 7th, 5th, 3rd, or next-in-line
+ * (1st) waiting position. Position 1 here is "you're next, stay nearby" —
+ * distinct from callPatient's "it's your turn!" push, which fires
+ * separately once staff actually calls them. Recomputes the queue with
+ * the exact same orderQueueByPriorityRatio ordering getQueueEntries uses,
+ * so the position notified always matches what tablet/mobile show — not
+ * a separately-drifting count.
+ *
+ * Called after any mutation that removes someone from the front of the
+ * waiting list (call/complete/skip/no-show/cancel) — those are the only
+ * events that can improve (lower) another waiting patient's position. A
+ * new join never does (at worst, priority interleaving pushes a regular
+ * patient's position UP, which isn't something to notify about), so
+ * joinQueue/addWalkIn don't need this.
+ */
+const POSITION_MILESTONES = [7, 5, 3, 1];
+
+const notifyPositionMilestones = async (clinicId) => {
+  try {
+    const waitingEntries = await QueueEntry.find({ clinic: clinicId, status: 'waiting' })
+      .select('patient queueNumber lastNotifiedPosition priority queueType joinedAt createdAt')
+      .sort({ joinedAt: 1 });
+
+    if (waitingEntries.length === 0) return;
+
+    const ratio = await getPriorityRatio(clinicId);
+    const ordered = orderQueueByPriorityRatio(waitingEntries, ratio);
+
+    await Promise.all(
+      ordered.slice(0, Math.max(...POSITION_MILESTONES)).map(async (entry, idx) => {
+        const position = idx + 1;
+        if (!entry.patient) return; // walk-in ticket — no linked account to push to
+        if (!POSITION_MILESTONES.includes(position)) return;
+        if (entry.lastNotifiedPosition === position) return; // already notified for this exact milestone
+
+        const message = position === 1
+          ? `You're next in line for ticket #${entry.queueNumber} — please stay nearby, staff will call you shortly.`
+          : `You're now #${position} in line for ticket #${entry.queueNumber}.`;
+
+        await notifyUser(entry.patient, {
+          title: position === 1 ? "You're next!" : 'Queue Update',
+          message,
+          type: 'turn_alert',
+          refType: 'QueueEntry',
+          refId: entry._id,
+        });
+
+        entry.lastNotifiedPosition = position;
+        await entry.save();
+      })
+    );
+  } catch (err) {
+    // A notification failure must never break the queue mutation that
+    // triggered this check (calling/completing/etc. a patient always has
+    // to succeed regardless of push delivery) — log and move on.
+    console.error('notifyPositionMilestones Error:', err.message);
+  }
+};
+
+
+/**
  * Helper to emit Socket.io real-time updates across connected web, mobile, and tablet clients
  */
 const emitQueueUpdate = (req, clinicId, eventName, payload) => {
@@ -427,6 +488,7 @@ const callPatient = async (req, res) => {
       queueNumber: entry.queueNumber,
       gracePeriodExpiresAt: graceExpiry 
     });
+    notifyPositionMilestones(entry.clinic).catch(() => {});
 
     await logAction({
       actor: req.user,
@@ -517,6 +579,7 @@ const completePatient = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'queue_completed', { entryId: entry._id });
+    notifyPositionMilestones(entry.clinic).catch(() => {});
     await syncLinkedAppointment(entry._id, 'completed', { completedAt: entry.completedAt });
 
     await logAction({
@@ -557,6 +620,7 @@ const skipPatient = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'patient_skipped', { entryId: entry._id });
+    notifyPositionMilestones(entry.clinic).catch(() => {});
 
     await logAction({
       actor: req.user,
@@ -603,6 +667,7 @@ const markNoShow = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'patient_noshow', { entryId: entry._id });
+    notifyPositionMilestones(entry.clinic).catch(() => {});
     await syncLinkedAppointment(entry._id, 'no_show');
 
     await logAction({
@@ -643,6 +708,7 @@ const cancelEntry = async (req, res) => {
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
     emitQueueUpdate(req, entry.clinic, 'queue_cancelled', { entryId: entry._id });
+    notifyPositionMilestones(entry.clinic).catch(() => {});
     await syncLinkedAppointment(entry._id, 'cancelled', {
       cancelledAt: entry.cancelledAt,
       cancelledBy: req.user.role === 'patient' ? 'patient' : 'staff',

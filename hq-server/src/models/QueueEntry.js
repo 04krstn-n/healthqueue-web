@@ -71,6 +71,12 @@ const QueueEntrySchema = new mongoose.Schema(
     // ─── Wait & Performance Metrics (in minutes) ─────────────────────────────
     estimatedWaitMinutes: { type: Number, default: 0 },
     positionAtJoin:       { type: Number, default: 0 },
+    // Set by queueController.notifyPositionMilestones whenever a
+    // position-milestone push (7th/5th/3rd/next-in-line) is sent — so a
+    // later re-check (e.g. after the next patient ahead is also called)
+    // doesn't re-send the same milestone again if this entry's position
+    // hasn't actually changed since.
+    lastNotifiedPosition: { type: Number, default: null },
     
     // Actual computed metrics for OpenAI & Analytics
     // ─── Metric definitions (Capstone Requirement #3 — Waiting vs Service vs TAT) ───
