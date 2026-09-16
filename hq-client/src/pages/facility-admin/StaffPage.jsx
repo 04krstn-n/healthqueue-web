@@ -50,7 +50,14 @@ export default function StaffPage() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [specFilter, setSpecFilter] = useState('All')
-  const [modal, setModal] = useState(null) // null | 'add' | 'edit' | 'view'
+  const [modal, setModal] = useState(null) // null | 'add' | 'edit' | 'view' | 'created'
+  // Holds the just-generated temp password so it can be shown in a
+  // persistent confirmation view instead of a 3-second toast — this value
+  // is hashed server-side immediately and can never be retrieved again
+  // after this response, so a toast that auto-dismisses risks losing it
+  // before anyone can copy it (see userController.createUser).
+  const [createdCredentials, setCreatedCredentials] = useState(null)
+  const [copiedTemp, setCopiedTemp] = useState(false)
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState({})
@@ -148,6 +155,8 @@ export default function StaffPage() {
     setSelected(null)
     setForm(EMPTY_FORM)
     setFormErrors({})
+    setCreatedCredentials(null)
+    setCopiedTemp(false)
   }
 
   const handleFieldChange = (field, value) => {
@@ -201,15 +210,21 @@ export default function StaffPage() {
       if (modal === 'edit' && selected?._id) {
         await staffApi.update(selected._id, payload)
         showToast('Staff member updated successfully')
+        closeModal()
       } else {
-        await staffApi.create({
-          ...payload,
-          password: 'Staff@123',
+        // password is intentionally NOT sent — userController.createUser
+        // always generates its own secure random temp password
+        // server-side and ignores anything the client sends. The
+        // response's tempPassword is the only place this value ever
+        // appears, so it has to be captured and shown now, not assumed.
+        const res = await staffApi.create(payload)
+        setCreatedCredentials({
+          fullName: payload.fullName,
+          tempPassword: res?.data?.tempPassword || null,
         })
-        showToast('Staff member added — default password: Staff@123')
+        setModal('created')
       }
 
-      closeModal()
       await loadStaff()
     } catch (e) {
       showToast(e?.response?.data?.message || 'Failed to save staff member')
@@ -663,6 +678,62 @@ export default function StaffPage() {
               </button>
               <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
                 {saving ? 'Saving…' : modal === 'edit' ? 'Save Changes' : 'Add Staff'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ACCOUNT CREATED — one-time temp password ──
+          Shown instead of an auto-dismissing toast: this password is
+          hashed server-side immediately after this response and can
+          never be retrieved again, so it needs to stay on screen until
+          the admin has actually copied it, not disappear after 3s. */}
+      {modal === 'created' && createdCredentials && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div className="modal-title">Staff Account Created</div>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
+                <strong>{createdCredentials.fullName}</strong>'s account is ready. Copy this temporary password now and hand it to them directly — it will not be shown again.
+              </p>
+              {createdCredentials.tempPassword ? (
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    background: '#F9FAFB', border: '1px solid var(--border)', borderRadius: 10,
+                    padding: '12px 14px', marginBottom: 8,
+                  }}
+                >
+                  <code style={{ fontSize: 15, fontWeight: 700, letterSpacing: 0.5, flex: 1, wordBreak: 'break-all' }}>
+                    {createdCredentials.tempPassword}
+                  </code>
+                  <button
+                    className="btn btn-outline"
+                    style={{ fontSize: 12, padding: '5px 10px', flexShrink: 0 }}
+                    onClick={() => {
+                      navigator.clipboard?.writeText(createdCredentials.tempPassword)
+                      setCopiedTemp(true)
+                      setTimeout(() => setCopiedTemp(false), 2000)
+                    }}
+                  >
+                    {copiedTemp ? 'Copied ✓' : 'Copy'}
+                  </button>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: 'var(--error, #DC2626)' }}>
+                  The account was created, but the temporary password wasn't returned — use "Forgot Password" on the login screen with this staff member's phone number to set one.
+                </div>
+              )}
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 12, lineHeight: 1.5 }}>
+                They'll be required to set their own password the first time they log in.
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" onClick={closeModal}>
+                Done
               </button>
             </div>
           </div>

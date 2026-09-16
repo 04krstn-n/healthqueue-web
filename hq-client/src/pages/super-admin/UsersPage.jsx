@@ -194,15 +194,26 @@ useEffect(() => {
     setFormErrors({})
  
     try {
-      await usersApi.create({
+      // password is intentionally NOT sent here — userController.createUser
+      // always generates its own secure random temp password server-side
+      // and ignores anything the client sends, precisely so it can't be
+      // left as something predictable. The response's tempPassword field
+      // is the ONLY place this value ever appears — it's hashed
+      // immediately and can't be retrieved again after this, so it must
+      // be shown now, not assumed to be some fixed string.
+      const res = await usersApi.create({
         fullName: `${userForm.firstName.trim()} ${userForm.lastName.trim()}`.trim(),
         email: userForm.email.trim(),
         phone: userForm.phone.trim(),
         role: userForm.role,
         clinicId: userForm.clinicId || null,
-        password: 'HealthQueue@2025',
       })
-      setUserSuccess('User created successfully! Default password: HealthQueue@2025')
+      const tempPassword = res?.data?.tempPassword
+      setUserSuccess(
+        tempPassword
+          ? `User created successfully! Temporary password: ${tempPassword} — copy this now, it won't be shown again. They'll be required to set their own on first login.`
+          : 'User created successfully!'
+      )
       setUserForm(EMPTY_USER_FORM)
       await loadUsers()
     } catch (e) {
@@ -669,7 +680,7 @@ useEffect(() => {
               <div>
                 <div className={styles.bannerTitle}>Create New User</div>
                 <div className={styles.bannerSub}>
-                  Add a new user to the HealthQueue+ system. Default password: <strong>HealthQueue@2025</strong>
+                  Add a new user to the HealthQueue+ system. A secure temporary password will be generated automatically — you'll see it once after creating the account.
                 </div>
               </div>
             </div>
