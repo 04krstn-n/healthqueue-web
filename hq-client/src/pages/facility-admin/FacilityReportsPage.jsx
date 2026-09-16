@@ -516,6 +516,7 @@ const RELIABILITY_STYLES = {
 
 function AiInsightsPanel({ aiInsights }) {
   const { narrative, forecast, forecastReliability, prescriptions = [] } = aiInsights
+  const [showFull, setShowFull] = useState(false)
   const relStyle = RELIABILITY_STYLES[forecastReliability?.confidence] || RELIABILITY_STYLES.low
 
   const trendArrow =
@@ -529,8 +530,47 @@ function AiInsightsPanel({ aiInsights }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {narrative && (
-        <div style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
-          {narrative}
+        <div>
+          {narrative.summary?.length > 0 ? (
+            <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {narrative.summary.map((point, i) => (
+                <li key={i} style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.5 }}>{point}</li>
+              ))}
+            </ul>
+          ) : (
+            // Model didn't follow the SUMMARY/FULL format — fall back to
+            // showing the full text directly rather than nothing at all.
+            <div style={{ fontSize: 12.5, color: '#334155', lineHeight: 1.6, whiteSpace: 'pre-line' }}>
+              {narrative.full}
+            </div>
+          )}
+
+          {narrative.full && narrative.summary?.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowFull((v) => !v)}
+                style={{
+                  marginTop: 8, background: 'none', border: 'none', padding: 0,
+                  fontSize: 12, fontWeight: 600, color: '#2563EB', cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                {showFull ? 'Hide Full Interpretation' : 'View Full Interpretation'}
+                <span style={{ fontSize: 9, transform: showFull ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>▼</span>
+              </button>
+              {showFull && (
+                <div
+                  style={{
+                    marginTop: 8, fontSize: 12.5, color: '#334155', lineHeight: 1.6,
+                    whiteSpace: 'pre-line', borderTop: '1px solid #E2E8F0', paddingTop: 10,
+                  }}
+                >
+                  {narrative.full}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

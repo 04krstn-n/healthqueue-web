@@ -125,7 +125,7 @@ async function generateNarrative(metrics, rules, forecast, clinicName, openaiCli
 
   const prompt = `You are a healthcare operations analyst for ${clinicName}, a private health clinic in the Philippines.
 
-Based on today's operational data and rule-based analysis, write a concise prescriptive analytics report.
+Based on today's operational data and rule-based analysis, write a prescriptive analytics report for a Facility Admin or Healthcare Staff member who needs to understand this quickly, without medical or technical jargon.
 
 ## Today's Metrics
 - Patients registered today: ${metrics.todayPatients}
@@ -141,21 +141,43 @@ Based on today's operational data and rule-based analysis, write a concise presc
 ## Rule-Based Findings
 ${rulesText || 'No critical issues detected.'}
 
-Write in 3 short paragraphs:
-1. Current situation summary (2-3 sentences)
-2. Key risks or opportunities identified (2-3 sentences)
-3. Top 2-3 specific actions the facility admin should take today
+Produce TWO versions of the same interpretation. Respond in exactly this format, nothing else:
 
-Be specific, data-driven, and actionable. Do NOT use generic advice. Keep total response under 200 words.`;
+SUMMARY:
+- <key point 1, plain language, under 12 words>
+- <key point 2, plain language, under 12 words>
+- <key point 3, plain language, under 12 words>
+FULL:
+<3 short paragraphs: (1) current situation, 2-3 sentences; (2) key risks or opportunities, 2-3 sentences; (3) top 2-3 specific actions to take today. Be specific and data-driven — no generic advice. Under 200 words total.>
+
+The SUMMARY bullets must be simple enough for someone to understand at a glance, with no jargon or technical terms. The FULL section can go into more detail but must still avoid unnecessary technical language.`;
 
   const completion = await openaiClient.chat.completions.create({
     model: 'gpt-4o-mini',
-    max_tokens: 300,
+    max_tokens: 400,
     temperature: 0.4,
     messages: [{ role: 'user', content: prompt }],
   });
 
-  return completion.choices[0]?.message?.content?.trim() || null;
+  const text = completion.choices[0]?.message?.content?.trim() || '';
+  if (!text) return null;
+
+  // Parse the two delimited sections. Falls back to treating the whole
+  // response as "full" with no bullets if the model doesn't follow the
+  // format exactly — better than losing the interpretation entirely.
+  const summaryMatch = text.match(/SUMMARY:\s*([\s\S]*?)(?=\nFULL:|$)/i);
+  const fullMatch = text.match(/FULL:\s*([\s\S]*)$/i);
+
+  const summary = summaryMatch
+    ? summaryMatch[1]
+        .split('\n')
+        .map((line) => line.replace(/^[\s-]+/, '').trim())
+        .filter(Boolean)
+    : [];
+
+  const full = fullMatch ? fullMatch[1].trim() : text;
+
+  return { summary, full };
 }
 
 // ── GET /api/analytics/ai-insights?clinicId=xxx ──────────────────────────────
