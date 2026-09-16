@@ -64,9 +64,12 @@ function emitEscalation(req, clinicId, payload) {
 }
 
 // ── FAQ Keyword Match Fallback ───────────────────────────────────────────────
-async function faqMatch(message) {
+async function faqMatch(message, clinicId) {
   const msg = message.toLowerCase().trim();
-  const faqs = await FAQ.find({ isActive: true });
+  const faqs = await FAQ.find({
+    isActive: true,
+    $or: [{ clinic: null }, { clinic: clinicId || null }],
+  });
   let bestMatch = null;
   let bestScore = 0;
 
@@ -99,7 +102,7 @@ async function openAiResponse(message, faqs) {
     .map((f, i) => `Q${i + 1}: ${f.question}\nA${i + 1}: ${f.answer}`)
     .join('\n\n');
 
-  const systemPrompt = `You are HQ Assistant, the AI concierge for HealthQueue+ in the Philippines.
+  const systemPrompt = `You are HQ Assistant, the AI assistant for HealthQueue+ in the Philippines.
 Your role:
 - Assist patients with clinic services, queueing rules, and consultation inquiries.
 - Be concise and warm (1-3 sentences max).
@@ -137,6 +140,11 @@ const handleMessage = async (req, res) => {
     let source = 'faq';
     let autoEscalate = false;
 
+    // Resolved once and reused across every tier below — RASA's metadata,
+    // the FAQs given to OpenAI, and the keyword-match fallback all need
+    // to agree on which clinic's FAQs apply, not each resolve it separately.
+    const effectiveClinicId = clinicId || await resolvePatientClinicId(req.user?._id || patientId);
+
     // 1. Tier 1: RASA AI Server
     if (RASA_SERVER_URL) {
       try {
@@ -156,7 +164,6 @@ const handleMessage = async (req, res) => {
         // hq-server pass through the normal protect + patientOnly
         // middleware exactly as if the patient's own app had called them.
         const patientToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || null;
-        const metaClinicId = clinicId || await resolvePatientClinicId(req.user?._id);
 
         const rasaRes = await axios.post(`${RASA_SERVER_URL}/webhooks/rest/webhook`, {
           sender: patientId || req.user?._id || 'anonymous',
@@ -165,7 +172,7 @@ const handleMessage = async (req, res) => {
             patient_token: patientToken,
             patient_id: req.user?._id ? String(req.user._id) : null,
             patient_name: req.user?.fullName || null,
-            clinic_id: metaClinicId ? String(metaClinicId) : null,
+            clinic_id: effectiveClinicId ? String(effectiveClinicId) : null,
           },
         }, { timeout: 10000 }); // was 4000 — too tight for the current Rasa host under memory pressure; see /areas notes
 
@@ -183,7 +190,10 @@ const handleMessage = async (req, res) => {
     // 2. Tier 2: OpenAI GPT-4o-mini
     if (!reply && openaiClient) {
       try {
-        const faqs = await FAQ.find({ isActive: true }).lean();
+        const faqs = await FAQ.find({
+          isActive: true,
+          $or: [{ clinic: null }, { clinic: effectiveClinicId || null }],
+        }).lean();
         reply = await openAiResponse(message, faqs);
         source = 'openai';
 
@@ -198,7 +208,7 @@ const handleMessage = async (req, res) => {
 
     // 3. Tier 3: Keyword Matching FAQ
     if (!reply) {
-      reply = await faqMatch(message);
+      reply = await faqMatch(message, effectiveClinicId);
       source = 'faq';
     }
 

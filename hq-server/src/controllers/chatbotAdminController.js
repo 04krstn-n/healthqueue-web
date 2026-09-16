@@ -13,6 +13,17 @@ const getFAQs = async (req, res) => {
     const filter = {};
     if (req.query.category) filter.category = req.query.category;
     if (req.query.active === 'true') filter.isActive = true;
+
+    // facility_admin/staff see their own clinic's FAQs plus global ones —
+    // never another clinic's. super_admin sees everything by default, or
+    // one clinic's view via ?clinicId= if it wants to check what a
+    // specific clinic's patients would see.
+    if (['facility_admin', 'staff'].includes(req.user.role) && req.user.clinicId) {
+      filter.$or = [{ clinic: req.user.clinicId }, { clinic: null }];
+    } else if (req.query.clinicId) {
+      filter.$or = [{ clinic: req.query.clinicId }, { clinic: null }];
+    }
+
     const faqs = await FAQ.find(filter).sort({ category: 1, createdAt: -1 });
     return res.status(HttpStatus.OK).json({ success: true, data: faqs });
   } catch (err) {
@@ -22,7 +33,7 @@ const getFAQs = async (req, res) => {
 
 const createFAQ = async (req, res) => {
   try {
-    const { question, answer, category, keywords, isActive } = req.body;
+    const { question, answer, category, keywords, isActive, clinicId } = req.body;
     if (!question || !answer) {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Question and answer are required.' });
     }
@@ -34,6 +45,16 @@ const createFAQ = async (req, res) => {
         ? keywords.split(',').map(k => k.trim().toLowerCase()).filter(Boolean)
         : [];
 
+    // facility_admin/staff can only ever create an FAQ for their own
+    // clinic — clinicId in the body is ignored for them, not trusted, so
+    // one clinic's admin can't create a global FAQ (which every other
+    // clinic's patients would then see) or plant one under another
+    // clinic's name. super_admin may set clinic: null (global) or target
+    // a specific clinic via clinicId.
+    const targetClinic = ['facility_admin', 'staff'].includes(req.user.role)
+      ? req.user.clinicId
+      : (clinicId || null);
+
     const faq = await FAQ.create({
       question: question.trim(),
       answer: answer.trim(),
@@ -41,6 +62,7 @@ const createFAQ = async (req, res) => {
       keywords: kws,
       isActive: isActive !== undefined ? isActive : true,
       createdBy: req.user._id,
+      clinic: targetClinic,
     });
 
     await logAction({
@@ -50,6 +72,7 @@ const createFAQ = async (req, res) => {
       targetId: faq._id,
       targetLabel: faq.question,
       details: { category: faq.category },
+      clinicId: targetClinic,
     });
 
     return res.status(HttpStatus.CREATED).json({ success: true, data: faq });
@@ -61,6 +84,26 @@ const createFAQ = async (req, res) => {
 
 const updateFAQ = async (req, res) => {
   try {
+    const existing = await FAQ.findById(req.params.id);
+    if (!existing) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'FAQ not found.' });
+
+    // facility_admin/staff may only edit their OWN clinic's FAQs — not a
+    // global one (which would change what every other clinic's patients
+    // see) and not another clinic's. Checked against the FAQ's existing
+    // clinic, not anything the client sends, so this can't be bypassed by
+    // omitting/altering a clinicId in the request body.
+    if (['facility_admin', 'staff'].includes(req.user.role)) {
+      const ownsIt = existing.clinic && String(existing.clinic) === String(req.user.clinicId);
+      if (!ownsIt) {
+        return res.status(HttpStatus.FORBIDDEN).json({
+          success: false,
+          message: existing.clinic
+            ? 'You can only edit your own clinic\'s FAQs.'
+            : 'This is a global FAQ — only a System Administrator can edit it.',
+        });
+      }
+    }
+
     const { question, answer, category, keywords, isActive } = req.body;
     const update = {};
     if (question !== undefined) update.question = question.trim();
@@ -75,7 +118,6 @@ const updateFAQ = async (req, res) => {
           : [];
     }
     const faq = await FAQ.findByIdAndUpdate(req.params.id, update, { new: true });
-    if (!faq) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'FAQ not found.' });
 
     await logAction({
       actor: req.user,
@@ -84,6 +126,7 @@ const updateFAQ = async (req, res) => {
       targetId: faq._id,
       targetLabel: faq.question,
       details: update,
+      clinicId: faq.clinic,
     });
 
     return res.status(HttpStatus.OK).json({ success: true, data: faq });
@@ -94,8 +137,23 @@ const updateFAQ = async (req, res) => {
 
 const deleteFAQ = async (req, res) => {
   try {
+    const existing = await FAQ.findById(req.params.id);
+    if (!existing) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'FAQ not found.' });
+
+    // Same ownership rule as updateFAQ above.
+    if (['facility_admin', 'staff'].includes(req.user.role)) {
+      const ownsIt = existing.clinic && String(existing.clinic) === String(req.user.clinicId);
+      if (!ownsIt) {
+        return res.status(HttpStatus.FORBIDDEN).json({
+          success: false,
+          message: existing.clinic
+            ? 'You can only delete your own clinic\'s FAQs.'
+            : 'This is a global FAQ — only a System Administrator can delete it.',
+        });
+      }
+    }
+
     const faq = await FAQ.findByIdAndDelete(req.params.id);
-    if (!faq) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'FAQ not found.' });
 
     await logAction({
       actor: req.user,
@@ -103,6 +161,7 @@ const deleteFAQ = async (req, res) => {
       targetType: 'FAQ',
       targetId: req.params.id,
       targetLabel: faq.question,
+      clinicId: faq.clinic,
     });
 
     return res.status(HttpStatus.OK).json({ success: true, message: 'FAQ deleted.' });

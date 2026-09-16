@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { chatbotAdminApi } from '../../services/api'
+import { useAuth } from '../../context/AuthContext'
 import styles from './ChatbotAdminPage.module.css'
 
 const CATEGORIES = ['General Info', 'Queue Information', 'Appointments', 'Account', 'Clinic']
@@ -36,6 +37,13 @@ const EMPTY_FORM = {
 }
 
 export default function ChatbotAdminPage() {
+  const { user } = useAuth()
+  // facility_admin/staff can edit their own clinic's FAQs but not global
+  // ones — matches the same rule chatbotAdminController.updateFAQ/deleteFAQ
+  // now enforce server-side. This just keeps Edit/Disable/Delete from
+  // being clickable-then-rejected for something they were never going to
+  // be allowed to change.
+  const canManageGlobalFAQs = user?.role === 'super_admin'
   const [tab, setTab] = useState('Responses') // 'Responses' | 'Escalated' | 'Settings' | 'Analytics'
   const [faqs, setFaqs] = useState([])
   const [logs, setLogs] = useState([])
@@ -399,6 +407,11 @@ export default function ChatbotAdminPage() {
                       <span className={`badge ${faq.isActive ? 'badge-green' : 'badge-gray'}`}>
                         {faq.isActive ? 'Active' : 'Disabled'}
                       </span>
+                      {!faq.clinic && (
+                        <span className="badge badge-purple" title="Shown to every clinic's patients">
+                          Global
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -420,30 +433,36 @@ export default function ChatbotAdminPage() {
                   {/* Footer Actions */}
                   <div className={styles.faqFooter}>
                     <span className={styles.usageText}>Used {faq.usageCount || 0} times</span>
-                    <div className={styles.faqActions}>
-                      <button className={styles.actionBtn} onClick={() => openEdit(faq)}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                        </svg>
-                        Edit
-                      </button>
-                      <button className={styles.actionBtn} onClick={() => handleToggleActive(faq)}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="10" />
-                          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-                        </svg>
-                        {faq.isActive ? 'Disable' : 'Enable'}
-                      </button>
-                      <button className={`${styles.actionBtn} ${styles.actionDelete}`} onClick={() => handleRemove(faq._id)}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6l-1 14H6L5 6" />
-                          <path d="M10 11v6M14 11v6" />
-                        </svg>
-                        Delete
-                      </button>
-                    </div>
+                    {(canManageGlobalFAQs || faq.clinic) ? (
+                      <div className={styles.faqActions}>
+                        <button className={styles.actionBtn} onClick={() => openEdit(faq)}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                          </svg>
+                          Edit
+                        </button>
+                        <button className={styles.actionBtn} onClick={() => handleToggleActive(faq)}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+                          </svg>
+                          {faq.isActive ? 'Disable' : 'Enable'}
+                        </button>
+                        <button className={`${styles.actionBtn} ${styles.actionDelete}`} onClick={() => handleRemove(faq._id)}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v6M14 11v6" />
+                          </svg>
+                          Delete
+                        </button>
+                      </div>
+                    ) : (
+                      <span className={styles.usageText} style={{ fontStyle: 'italic' }}>
+                        Managed by System Admin
+                      </span>
+                    )}
                   </div>
                 </div>
               ))}
