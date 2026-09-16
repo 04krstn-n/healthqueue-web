@@ -2,7 +2,6 @@
  * User Controller — user management (admin use)
  */
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
@@ -10,35 +9,16 @@ const Staff = require('../models/Staff');
 const { logAction } = require('../utils/auditLog');
 const { validatePasswordStrength, normalizePhone } = require('./authController');
 
-// Generates a random one-time password for accounts an admin creates on
-// someone else's behalf (super_admin -> facility_admin, facility_admin ->
-// staff). Guaranteed to satisfy the same strength rule
-// authController.validatePasswordStrength enforces (8+ chars, upper,
-// lower, digit, special) — built from one guaranteed character of each
-// class plus random fill, then shuffled so the required characters aren't
-// always in the same position. The admin sees this once, in the create
-// response, to hand over to the account's owner; mustChangePassword forces
-// them to replace it before doing anything else.
-const generateTempPassword = () => {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
-  const lower = 'abcdefghijkmnopqrstuvwxyz';
-  const digits = '23456789';
-  const special = '!@#$%^&*';
-  const all = upper + lower + digits + special;
-
-  const pick = (chars) => chars[crypto.randomInt(chars.length)];
-  const required = [pick(upper), pick(lower), pick(digits), pick(special)];
-  const fill = Array.from({ length: 8 }, () => pick(all));
-  const chars = [...required, ...fill];
-
-  // Fisher-Yates shuffle using crypto.randomInt (avoids Math.random for
-  // anything password-related)
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join('');
-};
+// Fixed temp password for every account an admin creates on someone
+// else's behalf (super_admin -> facility_admin, facility_admin -> staff).
+// Deliberately not randomly generated, per explicit request — the real
+// control limiting this password's exposure is mustChangePassword below,
+// which blocks every route until the account's real owner replaces it on
+// first login (see App.jsx's ProtectedRoute / login_screen.dart on
+// tablet). Whoever creates the account still sees this value in the
+// create response, same as before, so the display/copy UI on
+// UsersPage.jsx and StaffPage.jsx needs no changes.
+const DEFAULT_TEMP_PASSWORD = 'HealthQueue@2025';
 
 // GET /api/users
 const getUsers = async (req, res) => {
@@ -131,7 +111,7 @@ const createUser = async (req, res) => {
     // from the client) so it can't be left as something predictable like
     // "Staff@123"; mustChangePassword forces it to be replaced before the
     // account can be used for anything else.
-    const tempPassword = generateTempPassword();
+    const tempPassword = DEFAULT_TEMP_PASSWORD;
     const [user] = await User.create(
       [
         {
