@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { io } from 'socket.io-client'
-import { publicApi } from '../services/api'
+import { publicApi } from '../../services/api'
 import styles from './queueBoard.module.css'
 
 const SOCKET_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000')
@@ -122,7 +122,7 @@ export default function QueueBoardPage() {
     <main className={styles.page}>
       <header className={styles.header}>
         <div>
-          <div className={styles.brand}>HealthQueue</div>
+          <div className={styles.brand}>HealthQueue+</div>
           <div className={styles.clinic}>{board.clinic?.name}</div>
         </div>
         <div>
@@ -143,6 +143,44 @@ export default function QueueBoardPage() {
         </div>
       )}
 
+      {(board.lines || []).length > 1 ? (
+        // Several services are active: one column per service line. The same
+        // ticket number can sit in more than one column (one ticket, many lines);
+        // in a line where that patient is busy at another service it is greyed.
+        <div className={styles.columns} style={{ gridTemplateColumns: `repeat(${Math.min(board.lines.length, 4)}, minmax(0, 1fr))` }}>
+          {board.lines.map((line) => (
+            <section key={line.service} className={styles.panel} aria-live="polite">
+              <h2 className={styles.panelTitle}>{line.service}</h2>
+              {line.nowServing.length > 0 && (
+                <div className={styles.serving}>
+                  {line.nowServing.map((t) => (
+                    <div key={`${line.service}-${t.ticket}`} className={`${styles.tile} ${t.status === 'called' ? styles.tileCalled : ''}`}>
+                      <div className={styles.ticket}>{t.ticket}</div>
+                      <div className={`${styles.tag} ${t.status === 'serving' ? styles.tagServing : ''}`}>
+                        {t.status === 'called' ? 'Please proceed' : 'In consultation'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {line.nextUp.length === 0 ? (
+                <div className={styles.empty}>No one is waiting.</div>
+              ) : (
+                <ol className={styles.next}>
+                  {line.nextUp.map((t) => (
+                    <li key={`${line.service}-${t.ticket}`} className={`${styles.nextRow} ${t.held ? styles.held : ''}`}>
+                      <span className={styles.nextTicket}>{t.ticket}</span>
+                      <span className={styles.nextPos}>
+                        {t.held ? `At ${t.heldAt}` : t.position === 1 ? 'You’re next' : `#${t.position}`}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          ))}
+        </div>
+      ) : (
       <div className={styles.grid}>
         <section className={styles.panel} aria-live="polite">
           <h2 className={styles.panelTitle}>Now serving</h2>
@@ -181,6 +219,12 @@ export default function QueueBoardPage() {
           )}
         </section>
       </div>
+      )}
+
+      <footer className={styles.footer}>
+        <span>{board.waitingCount} waiting</span>
+        <span>Find your ticket number on your slip. Updated {new Date(board.updatedAt).toLocaleTimeString()}</span>
+      </footer>
     </main>
   )
 }
