@@ -8,7 +8,8 @@ const SOCKET_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000')
   .replace(/\/api\/?$/, '')
   .replace(/\/$/, '')
 
-const POLL_MS = 10000
+const POLL_MS = 4000 // safety-net refresh; live socket updates arrive in <1s, so the board is never >5s behind
+const MAX_COLS = 4 // service columns per screen
 
 // Short two-tone chime, generated in the browser (no audio file needed).
 // Browsers only allow sound after a click, hence the "Enable sound" button.
@@ -40,6 +41,7 @@ export default function QueueBoardPage() {
   const [offline, setOffline] = useState(false)
   const [now, setNow] = useState(new Date())
   const [soundOn, setSoundOn] = useState(false)
+  const [page, setPage] = useState(0)
 
   const audioRef = useRef(null)
   const seenCalledRef = useRef(null) // Set of "called" tickets already announced
@@ -76,10 +78,11 @@ export default function QueueBoardPage() {
   useEffect(() => {
     let debounce
     const socket = io(SOCKET_URL, { transports: ['polling', 'websocket'] })
+    socket.on('connect', load) // catch up right after any reconnect
     socket.on('global_queue_change', (payload) => {
       if (payload?.clinicId && String(payload.clinicId) !== String(clinicId)) return
       clearTimeout(debounce)
-      debounce = setTimeout(load, 300)
+      debounce = setTimeout(load, 150)
     })
     return () => {
       clearTimeout(debounce)
@@ -117,6 +120,10 @@ export default function QueueBoardPage() {
   if (!board) return <div className={styles.fullpage}>Loading…</div>
 
   const closed = board.clinic?.status === 'closed'
+  const allLines = board.lines || []
+  const pageCount = Math.max(1, Math.ceil(allLines.length / MAX_COLS))
+  const cur = Math.min(page, pageCount - 1) // clamp if services were removed
+  const pageLines = allLines.slice(cur * MAX_COLS, cur * MAX_COLS + MAX_COLS)
 
   return (
     <main className={styles.page}>
@@ -144,42 +151,75 @@ export default function QueueBoardPage() {
       )}
 
       {(board.lines || []).length > 1 ? (
-        // Several services are active: one column per service line. The same
-        // ticket number can sit in more than one column (one ticket, many lines);
-        // in a line where that patient is busy at another service it is greyed.
-        <div className={styles.columns} style={{ gridTemplateColumns: `repeat(${Math.min(board.lines.length, 4)}, minmax(0, 1fr))` }}>
-          {board.lines.map((line) => (
-            <section key={line.service} className={styles.panel} aria-live="polite">
-              <h2 className={styles.panelTitle}>{line.service}</h2>
-              {line.nowServing.length > 0 && (
-                <div className={styles.serving}>
-                  {line.nowServing.map((t) => (
-                    <div key={`${line.service}-${t.ticket}`} className={`${styles.tile} ${t.status === 'called' ? styles.tileCalled : ''}`}>
-                      <div className={styles.ticket}>{t.ticket}</div>
-                      <div className={`${styles.tag} ${t.status === 'serving' ? styles.tagServing : ''}`}>
-                        {t.status === 'called' ? 'Please proceed' : 'In consultation'}
+        // One column per service, max 4 per page; extra services rotate in pages.
+        <>
+          <div className={styles.columns} style={{ gridTemplateColumns: `repeat(${pageLines.length}, minmax(0, 1fr))` }}>
+            {pageLines.map((line) => (
+              <section key={line.service} className={styles.col} aria-live="polite">
+                <h2 className={styles.colTitle}>{line.service}</h2>
+
+                <div className={styles.sectionLabel}>Now serving</div>
+                {line.nowServing.length === 0 ? (
+                  <div className={styles.emptySmall}>—</div>
+                ) : (
+                  <div className={styles.servingCol}>
+                    {line.nowServing.map((t) => (
+                      <div key={`${line.service}-${t.ticket}`} className={`${styles.tile} ${t.status === 'called' ? styles.tileCalled : ''}`}>
+                        <div className={styles.ticket}>{t.ticket}</div>
+                        <div className={`${styles.tag} ${t.status === 'serving' ? styles.tagServing : ''}`}>
+                          {t.status === 'called' ? 'Please proceed' : 'In consultation'}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {line.nextUp.length === 0 ? (
-                <div className={styles.empty}>No one is waiting.</div>
-              ) : (
-                <ol className={styles.next}>
-                  {line.nextUp.map((t) => (
-                    <li key={`${line.service}-${t.ticket}`} className={`${styles.nextRow} ${t.held ? styles.held : ''}`}>
-                      <span className={styles.nextTicket}>{t.ticket}</span>
-                      <span className={styles.nextPos}>
-                        {t.held ? `At ${t.heldAt}` : t.position === 1 ? 'You’re next' : `#${t.position}`}
-                      </span>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
-          ))}
-        </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className={styles.sectionLabel}>Waiting</div>
+                {line.waiting.length === 0 ? (
+                  <div className={styles.emptySmall}>No one is waiting.</div>
+                ) : (
+                  <ol className={styles.next}>
+                    {line.waiting.map((t) => (
+                      <li key={`${line.service}-${t.ticket}`} className={styles.nextRow}>
+                        <span className={styles.nextTicket}>{t.ticket}</span>
+                        {t.position === 1 && <span className={styles.nextPos}>Next in line</span>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+
+                {line.onHold.length > 0 && (
+                  <>
+                    <div className={styles.sectionLabel}>On hold</div>
+                    <ol className={styles.next}>
+                      {line.onHold.map((t) => (
+                        <li key={`${line.service}-h-${t.ticket}`} className={`${styles.nextRow} ${styles.held}`}>
+                          <span className={styles.nextTicket}>{t.ticket}</span>
+                          <span className={styles.nextPos}>At {t.heldAt}</span>
+                        </li>
+                      ))}
+                    </ol>
+                  </>
+                )}
+              </section>
+            ))}
+          </div>
+          {pageCount > 1 && (
+            <nav className={styles.pager} aria-label="Board pages">
+              <button className={styles.pageBtn} disabled={cur === 0} onClick={() => setPage(cur - 1)} aria-label="Previous page">‹</button>
+              {Array.from({ length: pageCount }, (_, i) => (
+                <button
+                  key={i}
+                  className={`${styles.pageBtn} ${i === cur ? styles.pageBtnOn : ''}`}
+                  onClick={() => setPage(i)}
+                  aria-label={`Page ${i + 1}`}
+                  aria-current={i === cur ? 'page' : undefined}
+                >{i + 1}</button>
+              ))}
+              <button className={styles.pageBtn} disabled={cur === pageCount - 1} onClick={() => setPage(cur + 1)} aria-label="Next page">›</button>
+            </nav>
+          )}
+        </>
       ) : (
       <div className={styles.grid}>
         <section className={styles.panel} aria-live="polite">

@@ -31,7 +31,7 @@ const getQueueBoard = async (req, res) => {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Clinic not found.' });
     }
 
-    const clinic = await Clinic.findById(clinicId).select('name status');
+    const clinic = await Clinic.findById(clinicId).select('name status services');
     if (!clinic) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Clinic not found.' });
     }
@@ -74,31 +74,47 @@ const getQueueBoard = async (req, res) => {
     const seenTicket = new Set();
     const active = activeSorted.filter((e) => (seenTicket.has(e.queueNumber) ? false : seenTicket.add(e.queueNumber)));
 
-    // One column per service line (a multi-service patient's single ticket
-    // number appears in each of its lines). A waiting ticket whose patient is
-    // currently called/serving at ANOTHER service is flagged `held` with that
-    // service's name, so the board can show it greyed instead of hiding it.
-    const svcNameOf = new Map();
+    // One column per service. Every available service of the clinic gets a
+    // column (even when empty), keyed by service NAME so two catalog rows with
+    // the same name never produce two columns. A multi-service patient's single
+    // ticket number appears in each of its lines; a waiting ticket whose patient
+    // is called/serving at ANOTHER service goes to that column's "on hold" list.
+    const nameKey = (n) => String(n || 'General').trim().toLowerCase();
     const activeAt = new Map(); // ticket -> service where it is called/serving
     for (const e of entries) {
-      svcNameOf.set(lineKeyOf(e), e.serviceName);
       if (e.status === 'called' || e.status === 'serving') activeAt.set(e.queueNumber, e.serviceName);
     }
     const lineMap = new Map();
-    const ensure = (e) => {
-      const k = lineKeyOf(e);
-      if (!lineMap.has(k)) lineMap.set(k, { service: e.serviceName, nowServing: [], nextUp: [] });
+    const ensure = (name) => {
+      const k = nameKey(name);
+      if (!lineMap.has(k)) lineMap.set(k, { service: String(name || 'General').trim(), nowServing: [], waiting: [], onHold: [] });
       return lineMap.get(k);
     };
-    activeSorted.forEach((e) => ensure(e).nowServing.push({ ticket: e.queueNumber, status: e.status }));
-    for (const g of groupByLine(waiting).values()) {
-      const line = ensure(g[0]);
-      orderQueueByPriorityRatio(g, ratio).slice(0, NEXT_UP_LIMIT).forEach((e, i) => {
+    for (const svc of clinic.services || []) {
+      if (svc && svc.name && svc.isAvailable !== false) ensure(svc.name);
+    }
+    activeSorted.forEach((e) => ensure(e.serviceName).nowServing.push({ ticket: e.queueNumber, status: e.status }));
+    const byName = new Map();
+    for (const e of waiting) {
+      const k = nameKey(e.serviceName);
+      if (!byName.has(k)) byName.set(k, []);
+      byName.get(k).push(e);
+    }
+    for (const g of byName.values()) {
+      const line = ensure(g[0].serviceName);
+      orderQueueByPriorityRatio(g, ratio).forEach((e) => {
         const at = activeAt.get(e.queueNumber);
-        line.nextUp.push({ ticket: e.queueNumber, position: i + 1, held: Boolean(at), heldAt: at || '' });
+        if (at) line.onHold.push({ ticket: e.queueNumber, heldAt: at });
+        else line.waiting.push({ ticket: e.queueNumber });
       });
     }
-    const boardLines = [...lineMap.values()].sort((a, b) => String(a.service).localeCompare(String(b.service)));
+    const boardLines = [...lineMap.values()].map((l) => ({
+      ...l,
+      waiting: l.waiting.slice(0, NEXT_UP_LIMIT).map((t, i) => ({ ...t, position: i + 1 })),
+      onHold: l.onHold.slice(0, NEXT_UP_LIMIT),
+    }));
+    // Order = the clinic's own service list order (then any service that only
+    // exists in today's entries), so removing a service shifts later ones left.
 
     res.set('Cache-Control', 'no-store');
     return res.status(HttpStatus.OK).json({
