@@ -122,7 +122,7 @@ export default function QueueBoardPage() {
     <main className={styles.page}>
       <header className={styles.header}>
         <div>
-          <div className={styles.brand}>HealthQueue+</div>
+          <div className={styles.brand}>HealthQueue</div>
           <div className={styles.clinic}>{board.clinic?.name}</div>
         </div>
         <div>
