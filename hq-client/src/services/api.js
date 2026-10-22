@@ -246,4 +246,12 @@ export const auditLogsApi = {
   list: (params) => api.get('/api/audit-logs', { params }),
 }
 
+// Public (no-login) endpoints — a bare axios instance on purpose: no auth
+// header, and none of the 401 -> redirect-to-login behaviour above, because a
+// waiting-room display has nobody logged in.
+const publicClient = axios.create({ baseURL: BASE })
+export const publicApi = {
+  queueBoard: (clinicId) => publicClient.get(`/api/public/queue-board/${clinicId}`),
+}
+
 export default api

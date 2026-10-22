@@ -43,6 +43,9 @@ export default function QueueAndAppointmentsPage() {
 
   // ── Walk-in Modal State ──
   const [walkinModal, setWalkinModal] = useState(false)
+  // Ticket number of the walk-in just added — shown big so staff can write it
+  // on the patient's slip (the patient then watches for it on the board).
+  const [walkinTicket, setWalkinTicket] = useState(null)
   const [walkinForm, setWalkinForm] = useState(INITIAL_WALKIN_FORM)
   const [walkinErrors, setWalkinErrors] = useState({})
   const [wSaving, setWSaving] = useState(false)
@@ -146,10 +149,13 @@ export default function QueueAndAppointmentsPage() {
 
     setWSaving(true)
     try {
-      await queueApi.addWalkin({ ...walkinForm, clinicId })
-      showToast(walkinForm.phone
-        ? 'Walk-in added — SMS updates will be sent'
-        : 'Walk-in added — no phone number, call their ticket number aloud')
+      const res = await queueApi.addWalkin({ ...walkinForm, clinicId })
+      const entry = res?.data?.entry || res?.data?.data
+      setWalkinTicket({
+        number: entry?.queueNumber || '',
+        name: walkinForm.patientName.trim(),
+        sms: Boolean(walkinForm.phone),
+      })
       closeWalkinModal()
       loadQueue()
     } catch (e) {
@@ -271,6 +277,15 @@ export default function QueueAndAppointmentsPage() {
           <div className={styles.sub}>Manage walk-ins and scheduled appointments</div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          {tab === 'queue' && (
+            <button
+              className="btn btn-outline"
+              title="Opens the public Now Serving screen for the waiting-room TV"
+              onClick={() => window.open(`/board/${clinicId?._id || clinicId}`, '_blank', 'noopener')}
+            >
+              Open Display Board
+            </button>
+          )}
           {tab === 'queue' && (
             <button className="btn btn-primary" onClick={() => setWalkinModal(true)}>
               + Add Walk-in
@@ -545,6 +560,31 @@ export default function QueueAndAppointmentsPage() {
       )}
 
       {/* ── WALK-IN MODAL ── */}
+      {/* ── Walk-in added: big ticket number to write on the slip ── */}
+      {walkinTicket && (
+        <div className="modal-overlay" onClick={() => setWalkinTicket(null)}>
+          <div className="modal" style={{ maxWidth: 400, textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="modal-title">Walk-in Added</span>
+              <button className="modal-close" onClick={() => setWalkinTicket(null)}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ fontSize: 13, color: 'var(--muted)' }}>Ticket number for {walkinTicket.name}</div>
+              <div style={{ fontSize: 56, fontWeight: 800, letterSpacing: 1, margin: '8px 0 12px' }}>
+                {walkinTicket.number || '—'}
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.5, margin: 0 }}>
+                Write this number on the patient's slip. They can watch for it on the waiting-room screen
+                {walkinTicket.sms ? ', and they will also get SMS updates.' : '. They have no phone number on file, so call their ticket aloud too.'}
+              </p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-primary" onClick={() => setWalkinTicket(null)}>Done</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {walkinModal && (
         <div className="modal-overlay" onClick={closeWalkinModal}>
           <div className="modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>

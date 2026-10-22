@@ -7,6 +7,9 @@ import AppErrorBoundary from './components/shared/AppErrorBoundary'
 // Public
 import LandingPage from './public/LandingPage'
 
+// Public waiting-room display (no login) — lazy so it stays out of the admin bundle
+const QueueBoardPage = lazy(() => import('./public/QueueBoardPage'))
+
 // Auth
 import LoginPage from './pages/auth/LoginPage'
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage'
@@ -95,6 +98,7 @@ function AppRoutes() {
         {/* Public */}
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/board/:clinicId" element={<QueueBoardPage />} />
 
         {/* Facility Admin */}
         <Route
