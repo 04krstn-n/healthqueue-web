@@ -619,7 +619,6 @@ const replyToThread = async (req, res) => {
       // emitEscalation already uses in chatbotController.js.
       const staffPayload = { patientId, logId: log._id };
       if (req.user.clinicId) io.to(`clinic_${req.user.clinicId}`).emit('chat_thread_message', staffPayload);
-      io.emit('global_chat_thread_message', staffPayload);
 
       // Live-updates the patient's OWN chat screen immediately if they
       // currently have it open — separate from the push notification

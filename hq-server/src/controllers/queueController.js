@@ -5,7 +5,8 @@ const mongoose = require('mongoose');
 const QueueEntry = require('../models/QueueEntry');
 const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
-const { notifyUser } = require('../utils/notify');
+const { notifyUser, notifyQueueEntry } = require('../utils/notify');
+const { normalizePhone } = require('./authController');
 const {
   getNextQueueNumber,
   estimateWaitTime,
@@ -41,11 +42,14 @@ const todayRange = () => {
  * joinQueue/addWalkIn don't need this.
  */
 const POSITION_MILESTONES = [7, 5, 3, 1];
+// Walk-ins are reached by SMS, which costs credits per message, so they get
+// only the two messages that matter: "you're close" (#3) and "you're next" (#1).
+const WALKIN_SMS_MILESTONES = [3, 1];
 
 const notifyPositionMilestones = async (clinicId) => {
   try {
     const waitingEntries = await QueueEntry.find({ clinic: clinicId, status: 'waiting' })
-      .select('patient queueNumber lastNotifiedPosition priority queueType joinedAt createdAt')
+      .select('patient patientPhone queueNumber lastNotifiedPosition priority queueType joinedAt createdAt')
       .sort({ joinedAt: 1 });
 
     if (waitingEntries.length === 0) return;
@@ -56,24 +60,30 @@ const notifyPositionMilestones = async (clinicId) => {
     await Promise.all(
       ordered.slice(0, Math.max(...POSITION_MILESTONES)).map(async (entry, idx) => {
         const position = idx + 1;
-        if (!entry.patient) return; // walk-in ticket — no linked account to push to
-        if (!POSITION_MILESTONES.includes(position)) return;
+        // App users get push at every milestone; walk-ins with a phone get SMS
+        // at the shorter list; a walk-in with no phone can't be reached.
+        const milestones = entry.patient
+          ? POSITION_MILESTONES
+          : (entry.patientPhone ? WALKIN_SMS_MILESTONES : []);
+        if (!milestones.includes(position)) return;
         if (entry.lastNotifiedPosition === position) return; // already notified for this exact milestone
 
         const message = position === 1
           ? `You're next in line for ticket #${entry.queueNumber} — please stay nearby, staff will call you shortly.`
           : `You're now #${position} in line for ticket #${entry.queueNumber}.`;
 
-        await notifyUser(entry.patient, {
+        const result = await notifyQueueEntry(entry, {
+          kind: position === 1 ? 'next' : 'near',
           title: position === 1 ? "You're next!" : 'Queue Update',
           message,
-          type: 'turn_alert',
-          refType: 'QueueEntry',
-          refId: entry._id,
         });
 
-        entry.lastNotifiedPosition = position;
-        await entry.save();
+        // Only mark the milestone as sent if it really went out, so a failed
+        // SMS is retried at the next queue change instead of being lost.
+        if (result.success) {
+          entry.lastNotifiedPosition = position;
+          await entry.save();
+        }
       })
     );
   } catch (err) {
@@ -91,7 +101,10 @@ const notifyPositionMilestones = async (clinicId) => {
 const emitQueueUpdate = (req, clinicId, eventName, payload) => {
   const io = req.app.get('io');
   if (io) {
+    // Staff room gets the full payload (names, phones). Patients' sockets
+    // only get a sanitized refresh ping from the public room.
     io.to(`clinic_${clinicId}`).emit(eventName, payload);
+    io.to(`clinicpub_${clinicId}`).emit(eventName, { clinicId: String(clinicId), eventName });
     io.emit('global_queue_change', { clinicId, eventName });
   }
 };
@@ -321,6 +334,25 @@ const joinQueue = async (req, res) => {
       joinedAt: new Date(),
     });
 
+    // Race guard. The "already has an active ticket" check above is a read
+    // followed by a write, so two simultaneous join requests (double-tap,
+    // retry after a flaky connection, two devices) can both pass it. Re-count
+    // AFTER inserting: every racer sees the same set of tickets, and the one
+    // with the highest _id removes itself, so exactly one survives.
+    const racers = await QueueEntry.find({
+      clinic: clinicId,
+      patient: req.user._id,
+      status: { $in: ['waiting', 'serving', 'called'] },
+      joinedAt: todayRange(),
+    }).select('_id').sort({ _id: 1 }).lean();
+    if (racers.length > 1 && String(racers[0]._id) !== String(entry._id)) {
+      await QueueEntry.deleteOne({ _id: entry._id });
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'You already have an active queue ticket at this clinic.',
+      });
+    }
+
     // Increment live clinic queue counters
     await Clinic.findByIdAndUpdate(clinicId, {
       $inc: { queueLength: 1 },
@@ -472,15 +504,14 @@ const callPatient = async (req, res) => {
     // `patient` user set, and Notification.user is required, so this used
     // to throw a ValidationError (500 "Failed to call patient") on every
     // walk-in call.
-    if (entry.patient) {
-      await notifyUser(entry.patient, {
-        title: 'It is your turn!',
-        message: `Ticket #${entry.queueNumber} — Please proceed to the counter within 5 minutes.`,
-        type: 'turn_alert',
-        refType: 'QueueEntry',
-        refId: entry._id,
-      });
-    }
+    // Linked app patients get a push; walk-ins with a phone get an SMS; a
+    // walk-in with no phone gets nothing (staff must call the ticket aloud —
+    // the response's notifyChannel tells the tablet which case this is).
+    const calledNotice = await notifyQueueEntry(entry, {
+      kind: 'called',
+      title: 'It is your turn!',
+      message: `Ticket #${entry.queueNumber} — Please proceed to the counter within 5 minutes.`,
+    });
 
     // Push Socket.io real-time event to patient mobile app
     emitQueueUpdate(req, entry.clinic, 'patient_called', { 
@@ -503,6 +534,8 @@ const callPatient = async (req, res) => {
     return res.status(HttpStatus.OK).json({
       success: true,
       message: 'Patient called. 5-minute grace period timer started.',
+      notifyChannel: calledNotice.channel,   // 'push' | 'sms' | 'none'
+      notifyDelivered: calledNotice.success,
       entry,
     });
   } catch (err) {
@@ -841,10 +874,18 @@ const addWalkIn = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Patient name is required.' });
     }
 
-    // Contact number is required so the patient can actually receive
-    // call/turn notifications — it used to be optional.
-    if (!phone || !phone.toString().trim()) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Contact number is required for notifications.' });
+    // Contact number is OPTIONAL: many walk-in patients (older patients in
+    // particular) don't carry a phone. With a number the patient gets SMS
+    // updates; without one, staff call the ticket number aloud.
+    let cleanPhone = '';
+    if (phone && phone.toString().trim()) {
+      cleanPhone = normalizePhone(phone.toString().trim());
+      if (!/^09\d{9}$/.test(cleanPhone)) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          success: false,
+          message: 'Enter a valid mobile number (09XXXXXXXXX), or leave it blank if the patient has no phone.',
+        });
+      }
     }
 
     const cId = clinicId || req.user.clinicId;
@@ -883,7 +924,7 @@ const addWalkIn = async (req, res) => {
     const entry = await QueueEntry.create({
       clinic: cId,
       patientName: patientName.trim(),
-      patientPhone: phone || '',
+      patientPhone: cleanPhone,
       patientType: patientType || 'Regular',
       serviceName,
       queueNumber,
@@ -898,9 +939,26 @@ const addWalkIn = async (req, res) => {
 
     emitQueueUpdate(req, cId, 'walkin_added', { entry });
 
+    // Confirmation SMS (ticket number + place in line) — also tells the
+    // patient the number they gave works. Fire-and-forget: adding to the queue
+    // must succeed even if the SMS provider is down.
+    const joinedNotice = cleanPhone
+      ? { channel: 'sms' }
+      : { channel: 'none' };
+    if (cleanPhone) {
+      notifyQueueEntry(entry, {
+        kind: 'joined',
+        title: 'Queue Ticket',
+        message: `Your ticket is #${entry.queueNumber}. You are #${activeCount + 1} in line, about ${estWait} min wait. We'll text you when you're close and when you're called.`,
+      }).catch(() => {});
+    }
+
     return res.status(HttpStatus.CREATED).json({
       success: true,
-      message: 'Walk-in patient added to queue.',
+      message: cleanPhone
+        ? 'Walk-in patient added to queue. SMS updates will be sent.'
+        : 'Walk-in patient added to queue. No phone number — call their ticket number aloud.',
+      notifyChannel: joinedNotice.channel,
       data: entry,
       entry,
       position: activeCount + 1,

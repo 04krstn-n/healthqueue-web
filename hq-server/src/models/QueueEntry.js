@@ -77,6 +77,23 @@ const QueueEntrySchema = new mongoose.Schema(
     // doesn't re-send the same milestone again if this entry's position
     // hasn't actually changed since.
     lastNotifiedPosition: { type: Number, default: null },
+
+    // Delivery log for notifications sent about THIS ticket (push for patients
+    // with the app, SMS for walk-ins). Capped at the latest 20. Gives staff and
+    // the capstone test evidence of whether a "you're next" / "you're called"
+    // message actually went out, and why it didn't when it failed.
+    notifyLog: {
+      type: [{
+        _id: false,
+        kind:    String,                       // 'joined' | 'near' | 'next' | 'called'
+        channel: String,                       // 'push' | 'sms'
+        success: Boolean,
+        error:   { type: String, default: '' },
+        at:      { type: Date, default: Date.now },
+      }],
+      default: [],
+      select: false, // not included in list payloads; read explicitly when needed
+    },
     
     // Actual computed metrics for OpenAI & Analytics
     // ─── Metric definitions (Capstone Requirement #3 — Waiting vs Service vs TAT) ───

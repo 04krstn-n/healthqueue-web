@@ -53,7 +53,10 @@ export const authApi = {
   login: (email, password) => api.post('/api/auth/login', { email, password }),
   me: () => api.get('/api/auth/me'),
   logout: () => api.post('/api/auth/logout'),
-  forgotPassword: (phone) => api.post('/api/auth/forgot-password', { phone }),
+  // Web is the administrator side: the reset code is emailed. A value with an
+  // "@" is sent as `email`; anything else falls back to `phone` (SMS).
+  forgotPassword: (identifier) =>
+    api.post('/api/auth/forgot-password', String(identifier).includes('@') ? { email: identifier } : { phone: identifier }),
   verifyResetOtp: (resetId, otp) => api.post('/api/auth/verify-reset-otp', { resetId, otp }),
   resetPassword: (resetId, resetToken, newPassword) =>
     api.post('/api/auth/reset-password', { resetId, resetToken, newPassword }),

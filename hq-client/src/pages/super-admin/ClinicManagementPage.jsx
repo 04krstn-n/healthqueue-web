@@ -33,7 +33,7 @@ const EMPTY_FORM = {
   city: '',
   address: '',
   province: '',
-  region: 'NCR',
+  region: 'Metro Manila',
   contactNumber: '',
   email: '',
   operatingHours: '8:00 AM - 5:00 PM',
@@ -41,7 +41,7 @@ const EMPTY_FORM = {
   acceptsWalkIn: true,
   acceptsAppointment: true,
   status: 'open',
-  facilityType: 'City Health Center',
+  facilityType: 'Private Clinic',
   services: [],
 }
 
@@ -105,7 +105,7 @@ export default function ClinicManagementPage() {
       city: clinic.city || '',
       address: clinic.address || '',
       province: clinic.province || '',
-      region: clinic.region || 'NCR',
+      region: clinic.region || 'Metro Manila',
       contactNumber: clinic.contactNumber || '',
       email: clinic.email || '',
       operatingHours: clinic.operatingHours || '8:00 AM - 5:00 PM',
@@ -113,7 +113,7 @@ export default function ClinicManagementPage() {
       acceptsWalkIn: clinic.acceptsWalkIn ?? true,
       acceptsAppointment: clinic.acceptsAppointment ?? true,
       status: (clinic.status || 'open').toLowerCase(),
-      facilityType: clinic.facilityType || 'City Health Center',
+      facilityType: clinic.facilityType || 'Private Clinic',
       services: clinic.services || [],
     })
     setFormErrors({})

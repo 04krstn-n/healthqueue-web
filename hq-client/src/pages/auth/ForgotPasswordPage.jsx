@@ -3,15 +3,71 @@ import { useNavigate } from 'react-router-dom'
 import { authApi } from '../../services/api'
 import styles from './LoginPage.module.css'
 
+// Password input with a red required asterisk in the label (above the field)
+// and an eye icon button that toggles between hidden and visible text.
+function PasswordField({ label, value, onChange, placeholder = '••••••••', autoComplete }) {
+  const [show, setShow] = useState(false)
+
+  return (
+    <div className={styles.formGroup}>
+      <label className={styles.label}>
+        {label} <span style={{ color: '#DC2626' }} aria-hidden="true">*</span>
+      </label>
+      <div className={styles.inputWrap} style={{ position: 'relative' }}>
+        <input
+          type={show ? 'text' : 'password'}
+          className={styles.input}
+          style={{ paddingRight: 40 }}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          autoComplete={autoComplete}
+          aria-required="true"
+        />
+        <button
+          type="button"
+          onClick={() => setShow((s) => !s)}
+          aria-label={show ? 'Hide password' : 'Show password'}
+          aria-pressed={show}
+          style={{
+            position: 'absolute',
+            right: 10,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: 'none',
+            border: 'none',
+            padding: 4,
+            cursor: 'pointer',
+            color: 'var(--muted)',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          {show ? (
+            // eye-off
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          ) : (
+            // eye
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          )}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // Three steps, matching authController's three endpoints exactly:
-//   1. forgotPassword(phone)              -> { resetId, devOtp? }
+//   1. forgotPassword(email)              -> { resetId }   (code is emailed)
 //   2. verifyResetOtp(resetId, otp)        -> { resetId, resetToken }
 //   3. resetPassword(resetId, resetToken, newPassword)
-// This works for ANY role (super_admin/facility_admin/staff/patient) —
-// the backend never restricts forgotPassword by role, it just looks the
-// account up by phone. userController.createUser now requires phone on
-// every admin/staff account specifically so this path is always available
-// to them, not just to patients.
+// Administrator-side recovery: super_admin / facility_admin / staff accounts
+// receive the code by EMAIL. Patients reset from the mobile app by phone.
 export default function ForgotPasswordPage() {
   const navigate = useNavigate()
   const [step, setStep] = useState('phone') // 'phone' | 'otp' | 'password' | 'done'
@@ -31,7 +87,8 @@ export default function ForgotPasswordPage() {
   const submitPhone = async (e) => {
     e.preventDefault()
     setError('')
-    if (!phone.trim()) { setError('Please enter your phone number.'); return }
+    if (!phone.trim()) { setError('Please enter your email address.'); return }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(phone.trim())) { setError('Please enter a valid email address.'); return }
 
     setLoading(true)
     try {
@@ -49,7 +106,7 @@ export default function ForgotPasswordPage() {
   const submitOtp = async (e) => {
     e.preventDefault()
     setError('')
-    if (!otp.trim()) { setError('Please enter the code sent to your phone.'); return }
+    if (!otp.trim()) { setError('Please enter the code sent to your email.'); return }
 
     setLoading(true)
     try {
@@ -101,18 +158,18 @@ export default function ForgotPasswordPage() {
         {step === 'phone' && (
           <form onSubmit={submitPhone} className={styles.form}>
             <p style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 4px' }}>
-              Enter the phone number on your account. We'll text you a verification code.
+              Enter the email address on your administrator account. We'll email you a verification code.
             </p>
             <div className={styles.formGroup}>
-              <label className={styles.label}>Phone Number</label>
+              <label className={styles.label}>Email Address</label>
               <div className={styles.inputWrap}>
                 <input
-                  type="tel"
+                  type="email"
                   className={styles.input}
-                  placeholder="09XXXXXXXXX"
+                  placeholder="you@example.com"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  autoComplete="tel"
+                  autoComplete="email"
                 />
               </div>
             </div>
@@ -125,11 +182,11 @@ export default function ForgotPasswordPage() {
         {step === 'otp' && (
           <form onSubmit={submitOtp} className={styles.form}>
             <p style={{ fontSize: 13, color: 'var(--muted)', margin: '0 0 4px' }}>
-              Enter the 6-digit code sent to {phone}.
+              Enter the 6-digit code sent to {phone}. It expires in 5 minutes.
             </p>
             {devOtp && (
               <div style={{ fontSize: 12, color: '#92400E', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '8px 12px' }}>
-                SMS isn't configured on this server — your code is <strong>{devOtp}</strong>.
+                Email isn't configured on this dev server — your code is <strong>{devOtp}</strong>.
               </div>
             )}
             <div className={styles.formGroup}>
@@ -154,39 +211,25 @@ export default function ForgotPasswordPage() {
               className={styles.forgot}
               onClick={() => { setStep('phone'); setOtp(''); setError('') }}
             >
-              Use a different phone number
+              Use a different email address
             </button>
           </form>
         )}
 
         {step === 'password' && (
           <form onSubmit={submitNewPassword} className={styles.form}>
-            <div className={styles.formGroup}>
-              <label className={styles.label}>New Password</label>
-              <div className={styles.inputWrap}>
-                <input
-                  type="password"
-                  className={styles.input}
-                  placeholder="••••••••"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-            </div>
-            <div className={styles.formGroup}>
-              <label className={styles.label}>Confirm New Password</label>
-              <div className={styles.inputWrap}>
-                <input
-                  type="password"
-                  className={styles.input}
-                  placeholder="••••••••"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-            </div>
+            <PasswordField
+              label="New Password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+            <PasswordField
+              label="Confirm New Password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+            />
             <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '2px 0 8px', lineHeight: 1.6 }}>
               Must be 8+ characters, with an uppercase letter, a lowercase letter, a number, and a special character.
             </div>

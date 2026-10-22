@@ -12,10 +12,12 @@ const { Server } = require('socket.io');
 
 const { HttpStatus, PORT, NODE_ENV, FRONTEND_ORIGINS } = require('./config/config');
 const connectDB = require('./config/db');
+const { registerSocketSecurity } = require('./socket/socketSecurity');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 const authRoutes         = require('./routes/authRoutes');
+const publicRoutes       = require('./routes/publicRoutes');
 const userRoutes         = require('./routes/userRoutes');
 const clinicRoutes       = require('./routes/clinicRoutes');
 const queueRoutes        = require('./routes/queueRoutes');
@@ -37,6 +39,12 @@ const auditLogRoutes     = require('./routes/auditLogRoutes');
 connectDB();
 
 const app = express();
+
+// Heroku (and most hosts) put a reverse proxy in front of the app. Without
+// this, req.ip is the PROXY's address for every visitor, so all the rate
+// limiters below would share one bucket across all users (e.g. 10 login
+// attempts per 15 minutes for the whole system). `1` = trust exactly one proxy hop.
+app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ─── Socket.io Setup for Real-Time Synchronization ────────────────────────────
@@ -51,20 +59,11 @@ const io = new Server(server, {
 // Attach socket instance to express app so controllers can trigger real-time queue events
 app.set('io', io);
 
+// Authenticated handshake + authorized room joins (join_clinic / join_user).
+registerSocketSecurity(io);
+
 io.on('connection', (socket) => {
   console.log(`Client connected to Socket.io: ${socket.id}`);
-
-  // Room subscriptions for targeted broadcasts (e.g., specific clinic queue updates)
-  socket.on('join_clinic', (clinicId) => {
-    socket.join(`clinic_${clinicId}`);
-  });
-
-  // Per-patient room — patients aren't tied to one clinic (they can join
-  // any clinic's queue), so account-level pushes like a patient-type
-  // request being approved need a room keyed by the user, not a clinic.
-  socket.on('join_user', (userId) => {
-    socket.join(`user_${userId}`);
-  });
 
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
@@ -96,6 +95,20 @@ const limiter = rateLimit({
     message: 'Too many requests. Please slow down and try again later.' 
   },
 });
+// Public waiting-room display (no login). Mounted BEFORE the general limiter
+// with its own, more generous per-IP limit: a TV refreshing every few seconds
+// (plus every clinic device sharing the clinic's one public IP) would
+// otherwise burn through the 200-requests-per-15-minutes budget and lock
+// staff out of the real API.
+const publicLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests. Please slow down.' },
+});
+app.use('/api/public', publicLimiter, publicRoutes);
+
 app.use('/api', limiter);
 
 // Stricter limiter for auth endpoints — the general /api limiter (200/15min)

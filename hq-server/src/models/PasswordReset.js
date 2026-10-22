@@ -20,7 +20,14 @@ const mongoose = require('mongoose');
 const PasswordResetSchema = new mongoose.Schema({
   user:              { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   phone:             { type: String, required: true, unique: true, trim: true, index: true },
+  // 'sms' (patients/staff) or 'email' (admin side). For email resets `phone`
+  // holds "email:<address>" so the existing unique index on `phone` still works
+  // without a database migration.
+  channel:           { type: String, enum: ['sms', 'email'], default: 'sms' },
+  email:             { type: String, default: null, lowercase: true, trim: true },
+  // Stored as a SHA-256 hash, never the raw code.
   otp:               { type: String, default: null },
+  otpAttempts:       { type: Number, default: 0 },
   otpExpires:        { type: Date, default: null },
   resetToken:        { type: String, default: null, select: false },
   resetTokenExpires: { type: Date, default: null },

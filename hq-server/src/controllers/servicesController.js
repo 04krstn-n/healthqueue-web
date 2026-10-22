@@ -148,12 +148,14 @@ const updateService = async (req, res) => {
     // client-side socket changes were needed for this to take effect.
     const io = req.app.get('io');
     if (io && setOps['services.$[svc].durationMinutes'] !== undefined) {
-      io.to(`clinic_${clinicId}`).emit('global_queue_change', {
+      const durationPing = {
         clinicId,
         eventName: 'service_duration_updated',
         serviceId,
         durationMinutes: setOps['services.$[svc].durationMinutes'],
-      });
+      };
+      io.to(`clinic_${clinicId}`).emit('global_queue_change', durationPing);
+      io.to(`clinicpub_${clinicId}`).emit('global_queue_change', durationPing);
     }
 
     return res.json(svc);

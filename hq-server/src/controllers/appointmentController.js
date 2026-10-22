@@ -189,6 +189,25 @@ const bookAppointment = async (req, res) => {
       status: 'pending',
     });
 
+    // Race guard (same idea as queueController.joinQueue): the duplicate
+    // check above is read-then-write, so two simultaneous bookings for the
+    // same slot can both pass it. Re-query after inserting; the booking with
+    // the highest _id removes itself so exactly one survives.
+    const sameSlot = await Appointment.find({
+      clinic: clinicId,
+      patient: req.user._id,
+      appointmentDate: { $gte: dayStart, $lte: dayEnd },
+      timeSlot,
+      status: { $nin: ['cancelled', 'no_show'] },
+    }).select('_id').sort({ _id: 1 }).lean();
+    if (sameSlot.length > 1 && String(sameSlot[0]._id) !== String(appointment._id)) {
+      await Appointment.deleteOne({ _id: appointment._id });
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'You already have an appointment scheduled for this time slot.',
+      });
+    }
+
     // Safely increment booked count on TimeSlot if schema/collection exists
     try {
       await TimeSlot.findOneAndUpdate(

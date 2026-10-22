@@ -184,10 +184,9 @@ const approveRequest = async (req, res) => {
       // active entry right away, reusing the same event queue screens
       // already listen for.
       if (activeEntry) {
-        io.to(`clinic_${activeEntry.clinic}`).emit('global_queue_change', {
-          clinicId: activeEntry.clinic,
-          eventName: 'patient_type_updated',
-        });
+        const ping = { clinicId: activeEntry.clinic, eventName: 'patient_type_updated' };
+        io.to(`clinic_${activeEntry.clinic}`).emit('global_queue_change', ping);
+        io.to(`clinicpub_${activeEntry.clinic}`).emit('global_queue_change', ping);
       }
     }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { usersApi, clinicsApi } from '../../services/api'
+import PasswordSetter, { validateNewPassword } from '../../components/shared/PasswordSetter'
 import styles from './super-admin.module.css'
  
 const ROLE_LABELS = {
@@ -85,6 +86,8 @@ const EMPTY_USER_FORM = {
   phone: '',
   role: 'facility_admin',
   clinicId: '',
+  password: '',
+  confirmPassword: '',
 }
  
 export default function UserManagementPage() {
@@ -134,16 +137,16 @@ export default function UserManagementPage() {
   }, [])
  
   useEffect(() => {
-  if (!userSuccess) return
-  const t = setTimeout(() => setUserSuccess(''), 4000)
-  return () => clearTimeout(t)
-}, [userSuccess])
+    if (!userSuccess) return
+    const t = setTimeout(() => setUserSuccess(''), 4000)
+    return () => clearTimeout(t)
+  }, [userSuccess])
  
-useEffect(() => {
-  if (!userError) return
-  const t = setTimeout(() => setUserError(''), 4000)
-  return () => clearTimeout(t)
-}, [userError])
+  useEffect(() => {
+    if (!userError) return
+    const t = setTimeout(() => setUserError(''), 4000)
+    return () => clearTimeout(t)
+  }, [userError])
  
   // ─── Data Loading ────────────────────────────────────────────────────────────
   const loadUsers = useCallback(async () => {
@@ -174,13 +177,15 @@ useEffect(() => {
  
   // ─── User Creation Handlers ──────────────────────────────────────────────────
   const handleCreateUser = async () => {
+    // Every field is required except the phone number.
     const errors = {}
     if (!userForm.firstName.trim()) errors.firstName = 'First name is required'
+    if (!userForm.lastName.trim()) errors.lastName = 'Last name is required'
     if (!userForm.email.trim()) errors.email = 'Email address is required'
     if (!userForm.role) errors.role = 'Role is required'
-    if (userForm.role === 'facility_admin' && !userForm.clinicId) {
-      errors.clinicId = 'Facility Admin must be assigned to a clinic.'
-    }
+    if (!userForm.clinicId) errors.clinicId = 'Please assign a clinic.'
+    const pwError = validateNewPassword(userForm.password, userForm.confirmPassword)
+    if (pwError) errors.password = pwError
  
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors)
@@ -194,26 +199,17 @@ useEffect(() => {
     setFormErrors({})
  
     try {
-      // password is intentionally NOT sent here — userController.createUser
-      // always generates its own secure random temp password server-side
-      // and ignores anything the client sends, precisely so it can't be
-      // left as something predictable. The response's tempPassword field
-      // is the ONLY place this value ever appears — it's hashed
-      // immediately and can't be retrieved again after this, so it must
-      // be shown now, not assumed to be some fixed string.
-      const res = await usersApi.create({
+      // The system administrator chooses the new account's password; the
+      // server validates it and never generates one.
+      await usersApi.create({
         fullName: `${userForm.firstName.trim()} ${userForm.lastName.trim()}`.trim(),
         email: userForm.email.trim(),
         phone: userForm.phone.trim(),
         role: userForm.role,
         clinicId: userForm.clinicId || null,
+        password: userForm.password,
       })
-      const tempPassword = res?.data?.tempPassword
-      setUserSuccess(
-        tempPassword
-          ? `User created successfully! Temporary password: ${tempPassword} — copy this now, it won't be shown again. They'll be required to set their own on first login.`
-          : 'User created successfully!'
-      )
+      setUserSuccess('User created successfully! Share the password you set with them directly — they will be asked to change it on first login.')
       setUserForm(EMPTY_USER_FORM)
       await loadUsers()
     } catch (e) {
@@ -680,7 +676,7 @@ useEffect(() => {
               <div>
                 <div className={styles.bannerTitle}>Create New User</div>
                 <div className={styles.bannerSub}>
-                  Add a new user to the HealthQueue+ system. A secure temporary password will be generated automatically — you'll see it once after creating the account.
+                  Add a new user to the HealthQueue+ system. You set the account's initial password below and hand it to the user directly.
                 </div>
               </div>
             </div>
@@ -717,13 +713,24 @@ useEffect(() => {
                 </div>
  
                 <div className="form-group">
-                  <label className="form-label">Last Name</label>
+                  <label className="form-label">
+                    Last Name <span className={styles.req}>*</span>
+                  </label>
                   <input
                     className="form-input"
                     placeholder="Last name"
                     value={userForm.lastName}
-                    onChange={(e) => setUserForm((f) => ({ ...f, lastName: e.target.value }))}
+                    style={{ border: formErrors.lastName ? '1px solid #DC2626' : undefined }}
+                    onChange={(e) => {
+                      setUserForm((f) => ({ ...f, lastName: e.target.value }))
+                      if (formErrors.lastName) setFormErrors((f) => ({ ...f, lastName: '' }))
+                    }}
                   />
+                  {formErrors.lastName && (
+                    <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
+                      {formErrors.lastName}
+                    </div>
+                  )}
                 </div>
  
                 <div className="form-group">
@@ -749,13 +756,18 @@ useEffect(() => {
                 </div>
  
                 <div className="form-group">
-                  <label className="form-label">Phone Number</label>
+                  <label className="form-label">
+                    Phone Number{' '}
+                    <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>
+                  </label>
                   <input
                     className="form-input"
                     placeholder="09XXXXXXXXX"
                     value={userForm.phone}
-                   onChange={(e) => { const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
-                     setUserForm((f) => ({ ...f, phone: digitsOnly })) }}
+                    onChange={(e) => {
+                      const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 11)
+                      setUserForm((f) => ({ ...f, phone: digitsOnly }))
+                    }}
                   />
                 </div>
               </div>
@@ -771,7 +783,7 @@ useEffect(() => {
                   <select
                     className="form-select"
                     value={userForm.role}
-                    onChange={(e) => setUserForm((f) => ({ ...f, role: e.target.value, clinicId: '' }))}
+                    onChange={(e) => setUserForm((f) => ({ ...f, role: e.target.value }))}
                   >
                     {CREATE_ROLES.map((r) => (
                       <option key={r} value={r}>
@@ -783,8 +795,7 @@ useEffect(() => {
  
                 <div className="form-group">
                   <label className="form-label">
-                    Assign Clinic
-                    {userForm.role === 'facility_admin' && <span className={styles.req}> *</span>}
+                    Assign Clinic <span className={styles.req}>*</span>
                   </label>
                   <select
                     className="form-select"
@@ -795,21 +806,33 @@ useEffect(() => {
                       if (formErrors.clinicId) setFormErrors((f) => ({ ...f, clinicId: '' }))
                     }}
                   >
-                    <option value="">
-                      {userForm.role === 'facility_admin' ? '— Select clinic (required) —' : '— None —'}
-                    </option>
+                    <option value="">— Select clinic —</option>
                     {clinics.map((cl) => (
                       <option key={cl._id} value={cl._id}>
                         {cl.name.replace('Hi-Precision Diagnostics - ', '')}
                       </option>
                     ))}
                   </select>
-                  {userForm.role === 'facility_admin' && !userForm.clinicId && (
-                    <div style={{ fontSize: 11, color: '#D97706', marginTop: 4 }}>
-                      Facility Admin must be assigned to a clinic.
+                  {formErrors.clinicId && (
+                    <div style={{ color: '#DC2626', fontSize: 12, marginTop: 4, fontWeight: 500 }}>
+                      {formErrors.clinicId}
                     </div>
                   )}
                 </div>
+
+                <PasswordSetter
+                  password={userForm.password}
+                  confirm={userForm.confirmPassword}
+                  error={formErrors.password}
+                  onPassword={(v) => {
+                    setUserForm((f) => ({ ...f, password: v }))
+                    if (formErrors.password) setFormErrors((f) => ({ ...f, password: '' }))
+                  }}
+                  onConfirm={(v) => {
+                    setUserForm((f) => ({ ...f, confirmPassword: v }))
+                    if (formErrors.password) setFormErrors((f) => ({ ...f, password: '' }))
+                  }}
+                />
               </div>
             </div>
  

@@ -79,6 +79,8 @@ export default function QueueOversightPage() {
     const socket = io(SOCKET_URL || 'http://localhost:4000', {
       transports: ['polling', 'websocket'],
       withCredentials: true,
+      // Server requires the JWT to join a clinic room (socketSecurity.js).
+      auth: { token: sessionStorage.getItem('hq_token') || '' },
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
     })

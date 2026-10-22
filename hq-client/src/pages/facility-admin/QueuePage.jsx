@@ -134,6 +134,10 @@ export default function QueueAndAppointmentsPage() {
     if (!walkinForm.serviceName.trim()) {
       errors.serviceName = 'Service is required'
     }
+    // Phone is optional; when given it must be a PH mobile number so SMS can be delivered.
+    if (walkinForm.phone && !/^09\d{9}$/.test(walkinForm.phone)) {
+      errors.phone = 'Enter a valid mobile number (09XXXXXXXXX) or leave it blank'
+    }
 
     if (Object.keys(errors).length > 0) {
       setWalkinErrors(errors)
@@ -143,7 +147,9 @@ export default function QueueAndAppointmentsPage() {
     setWSaving(true)
     try {
       await queueApi.addWalkin({ ...walkinForm, clinicId })
-      showToast('Walk-in patient added')
+      showToast(walkinForm.phone
+        ? 'Walk-in added — SMS updates will be sent'
+        : 'Walk-in added — no phone number, call their ticket number aloud')
       closeWalkinModal()
       loadQueue()
     } catch (e) {
@@ -564,7 +570,7 @@ export default function QueueAndAppointmentsPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Phone </label>
+                <label className="form-label">Phone <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
                 <input
                   className="form-input"
                   type="tel"
@@ -574,6 +580,12 @@ export default function QueueAndAppointmentsPage() {
                   placeholder="09XXXXXXXXX"
                   onChange={(e) => handleWalkinChange('phone', e.target.value.replace(/\D/g, '').slice(0, 11))}
                 />
+                {walkinErrors.phone && (
+                  <div style={{ color: '#DC2626', fontSize: 12, marginTop: 6, fontWeight: 500 }}>{walkinErrors.phone}</div>
+                )}
+                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+                  With a number, the patient gets SMS when close and when called. Without one, call their ticket number aloud.
+                </div>
               </div>
 
               <div className="form-group">

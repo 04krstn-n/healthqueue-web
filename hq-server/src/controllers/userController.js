@@ -3,22 +3,19 @@
  */
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
+const { validateEmailAddress } = require('../services/emailService');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Staff = require('../models/Staff');
 const { logAction } = require('../utils/auditLog');
 const { validatePasswordStrength, normalizePhone } = require('./authController');
 
-// Fixed temp password for every account an admin creates on someone
-// else's behalf (super_admin -> facility_admin, facility_admin -> staff).
-// Deliberately not randomly generated, per explicit request — the real
-// control limiting this password's exposure is mustChangePassword below,
-// which blocks every route until the account's real owner replaces it on
-// first login (see App.jsx's ProtectedRoute / login_screen.dart on
-// tablet). Whoever creates the account still sees this value in the
-// create response, same as before, so the display/copy UI on
-// UsersPage.jsx and StaffPage.jsx needs no changes.
-const DEFAULT_TEMP_PASSWORD = 'HealthQueue@2025';
+// Passwords for accounts an admin creates on someone else's behalf
+// (super_admin -> facility_admin, facility_admin -> staff) are CHOSEN BY THE
+// CREATING ADMIN and sent in the request — the system never generates or
+// hard-codes one. The server enforces the same strength policy as patient
+// registration. mustChangePassword still forces the account's real owner to
+// replace it on first login, since the creator knows it.
 
 // GET /api/users
 const getUsers = async (req, res) => {
@@ -60,10 +57,18 @@ const getUser = async (req, res) => {
 
 // POST /api/users
 const createUser = async (req, res) => {
-  const { fullName, email, phone, role, clinicId, gender, specialization } = req.body;
+  const { fullName, email, phone, role, clinicId, gender, specialization, password } = req.body;
 
   if (!fullName || !email || !role) {
     return res.status(400).json({ message: 'fullName, email, and role are required.' });
+  }
+
+  if (!password || typeof password !== 'string') {
+    return res.status(400).json({ message: 'A password for the new account is required.' });
+  }
+  const passwordProblems = validatePasswordStrength(password);
+  if (passwordProblems.length > 0) {
+    return res.status(400).json({ message: `Password must contain ${passwordProblems.join(', ')}.` });
   }
 
   // Phone used to be optional here, which silently broke Forgot Password
@@ -82,7 +87,11 @@ const createUser = async (req, res) => {
     return res.status(403).json({ message: 'Facility admins can only create staff accounts.' });
   }
 
-  const normalizedEmail = email.toLowerCase().trim();
+  const emailCheck = await validateEmailAddress(email);
+  if (!emailCheck.ok) {
+    return res.status(400).json({ message: emailCheck.reason });
+  }
+  const normalizedEmail = emailCheck.email;
 
   // Detect if the MongoDB connection supports transactions (Atlas / Replica Sets)
   const isReplicaSet = mongoose.connection.client?.topology?.description?.type === 'ReplicaSetWithPrimary' 
@@ -107,18 +116,16 @@ const createUser = async (req, res) => {
       return res.status(409).json({ message: 'This phone number is already in use by another account.' });
     }
 
-    // 1. Create User — password is always generated here (never trusted
-    // from the client) so it can't be left as something predictable like
-    // "Staff@123"; mustChangePassword forces it to be replaced before the
-    // account can be used for anything else.
-    const tempPassword = DEFAULT_TEMP_PASSWORD;
+    // 1. Create User — password was chosen by the creating admin and has
+    // already passed the strength policy above; the pre-save hook hashes it.
+    // mustChangePassword makes the account's owner replace it on first login.
     const [user] = await User.create(
       [
         {
           fullName: fullName.trim(),
           email: normalizedEmail,
           phone: normalizedPhone,
-          password: tempPassword,
+          password,
           mustChangePassword: true,
           role,
           clinicId: targetClinic,
@@ -163,12 +170,6 @@ const createUser = async (req, res) => {
     return res.status(201).json({
       success: true,
       data: user.toSafeObject(),
-      // Shown once, here only — never logged, never stored anywhere but
-      // the (already-hashed) User document. The creating admin is
-      // responsible for handing this to the account's owner out of band;
-      // it can't be retrieved again after this response (they'd need to
-      // use forgot-password instead if it's lost before first login).
-      tempPassword,
     });
   } catch (err) {
     if (session) await session.abortTransaction();
@@ -204,7 +205,11 @@ const updateUser = async (req, res) => {
     if (specialization !== undefined) user.specialization = specialization;
 
     if (email !== undefined && req.user.role === 'super_admin') {
-      const normalizedEmail = email.toLowerCase().trim();
+      const emailCheck = await validateEmailAddress(email);
+      if (!emailCheck.ok) {
+        return res.status(400).json({ message: emailCheck.reason });
+      }
+      const normalizedEmail = emailCheck.email;
       if (normalizedEmail !== user.email) {
         const existing = await User.findOne({ email: normalizedEmail, _id: { $ne: user._id } });
         if (existing) {

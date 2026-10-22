@@ -58,9 +58,9 @@ function emitEscalation(req, clinicId, payload) {
   if (clinicId) {
     io.to(`clinic_${clinicId}`).emit('chat_escalated', payload);
   }
-  // super_admin dashboards aren't scoped to a single clinic room, so they
-  // still get a global heads-up alongside the clinic-scoped one.
-  io.emit('global_chat_escalated', { ...payload, clinicId });
+  // NOTE: the former `global_chat_escalated` io.emit() was removed — it sent
+  // escalation content to every connected socket and nothing listened to it.
+  // super_admin sockets may join any clinic room (see socket/socketSecurity.js).
 }
 
 // ── FAQ Keyword Match Fallback ───────────────────────────────────────────────
@@ -262,7 +262,6 @@ const handleMessage = async (req, res) => {
       if (io) {
         const payload = { patientId: String(req.user?._id || patientId), logId: log._id };
         io.to(`clinic_${resolvedClinicId}`).emit('chat_thread_message', payload);
-        io.emit('global_chat_thread_message', payload);
       }
     }
 

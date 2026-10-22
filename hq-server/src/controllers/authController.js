@@ -8,14 +8,36 @@ const Patient = require('../models/Patient');
 const PendingRegistration = require('../models/PendingRegistration');
 const PasswordReset = require('../models/PasswordReset');
 const { signToken } = require('../utils/token');
-const { HttpStatus } = require('../config/config');
+const { HttpStatus, NODE_ENV } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
 const { sendOTP } = require('../services/smsService');
+const {
+  validateEmailAddress,
+  sendOTPEmail,
+  sendPasswordChangedEmail,
+} = require('../services/emailService');
 
 /**
  * Generates a 6-digit OTP code
  */
-const generateOTPCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+// crypto.randomInt (CSPRNG) — Math.random() is predictable and must not be
+// used for security codes.
+const generateOTPCode = () => crypto.randomInt(100000, 1000000).toString();
+
+// Reset OTPs are stored hashed so a database read never reveals a live code.
+const hashOtp = (code) => crypto.createHash('sha256').update(String(code)).digest('hex');
+
+const isProd = NODE_ENV === 'production';
+const MAX_RESET_OTP_ATTEMPTS = 5;
+
+// SMS outcome -> what the client may be told. A code is NEVER returned to the
+// client in production, and never when a real SMS provider merely failed:
+// returning it would let anyone who triggers a reset for someone else's number
+// read the code straight out of the response and take over the account. The
+// "dev code in the response" convenience exists only when SMS is not
+// configured AND the server is not running in production.
+const smsDelivered = (r) => Boolean(r && r.success && !r.mock);
+const devOtpField = (r, otp) => (r && r.mock && !isProd ? { devOtp: otp } : {});
 
 // Normalizes a PH mobile number to a single canonical form (09XXXXXXXXX)
 // before it's ever stored or queried. The mobile app's register/forgot-
@@ -96,7 +118,14 @@ const register = async (req, res) => {
     }
 
     const cleanPhone = normalizePhone(phone);
-    const cleanEmail = email && email.trim() ? email.toLowerCase().trim() : null;
+    let cleanEmail = null;
+    if (email && email.trim()) {
+      const emailCheck = await validateEmailAddress(email);
+      if (!emailCheck.ok) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: emailCheck.reason });
+      }
+      cleanEmail = emailCheck.email;
+    }
 
     // Backend/database-level duplicate prevention — this check plus the
     // unique index on User.phone (see models/User.js) is what actually
@@ -150,25 +179,24 @@ const register = async (req, res) => {
     // to call in every environment.
     const smsResult = await sendOTP(cleanPhone, otpCode);
 
-    if (!smsResult.mock && !smsResult.success) {
-      console.error(`OTP SMS failed for ${cleanPhone}:`, smsResult.error);
+    if (!smsDelivered(smsResult)) {
+      console.error(`OTP SMS not delivered for ${cleanPhone}:`, smsResult.error || 'SMS not configured');
       return res.status(HttpStatus.CREATED).json({
         success: true,
-        message: `Registration started, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
+        message: smsResult.mock && !isProd
+          ? 'Almost done! SMS is not configured, so check the server logs for your OTP.'
+          : "We couldn't send the SMS right now. Tap \"Resend\" to try again.",
         userId: pending._id,
         phone: cleanPhone,
-        devOtp: otpCode,
+        ...devOtpField(smsResult, otpCode),
       });
     }
 
     return res.status(HttpStatus.CREATED).json({
       success: true,
-      message: smsResult.mock
-        ? 'Almost done! SMS is not configured, so check the server logs for your OTP.'
-        : 'An OTP code has been sent to your phone. Enter it to finish creating your account.',
+      message: 'An OTP code has been sent to your phone. Enter it to finish creating your account.',
       userId: pending._id,
       phone: cleanPhone,
-      ...(smsResult.mock ? { devOtp: otpCode } : {}),
     });
   } catch (err) {
     console.error('Register Error:', err.message);
@@ -360,21 +388,20 @@ const resendOTP = async (req, res) => {
 
     const smsResult = await sendOTP(pending.phone, otpCode);
 
-    if (!smsResult.mock && !smsResult.success) {
-      console.error(`Resend OTP SMS failed for ${pending.phone}:`, smsResult.error);
+    if (!smsDelivered(smsResult)) {
+      console.error(`Resend OTP SMS not delivered for ${pending.phone}:`, smsResult.error || 'SMS not configured');
       return res.status(HttpStatus.OK).json({
         success: true,
-        message: `Code regenerated, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
-        devOtp: otpCode,
+        message: smsResult.mock && !isProd
+          ? 'A fresh OTP code has been generated. SMS is not configured, so check the server logs.'
+          : "We couldn't send the SMS right now. Please try Resend again in a moment.",
+        ...devOtpField(smsResult, otpCode),
       });
     }
 
     return res.status(HttpStatus.OK).json({
       success: true,
-      message: smsResult.mock
-        ? 'A fresh OTP code has been generated. SMS is not configured, so check the server logs.'
-        : 'A fresh OTP code has been sent to your phone.',
-      ...(smsResult.mock ? { devOtp: otpCode } : {}),
+      message: 'A fresh OTP code has been sent to your phone.',
     });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
@@ -501,17 +528,85 @@ const login = async (req, res) => {
 };
 
 // ── Forgot Password ─────────────────────────────────────────────────────────
-// Step 1: POST /api/auth/forgot-password { phone } — sends an OTP to a
-// registered phone number. Upserts on phone, so requesting a new code
-// always invalidates any code issued by a previous request (same pattern
-// as PendingRegistration's registration OTP).
+// Step 1: POST /api/auth/forgot-password { email } OR { phone }
+//   - { email }: ADMIN-SIDE ONLY (super_admin, facility_admin, staff). The OTP
+//     is emailed. Patients can never reset by email (they have no required
+//     email, and their phone is the verified identity).
+//   - { phone }: patients and staff (SMS). Admin accounts are refused here and
+//     told to use email.
+// Upserts per identity, so requesting a new code always invalidates any code
+// issued by a previous request.
+const NON_PATIENT_ROLES = ['super_admin', 'facility_admin', 'staff'];
+const ADMIN_ROLES = ['super_admin', 'facility_admin'];
+
 const forgotPassword = async (req, res) => {
   try {
-    const { phone } = req.body;
+    const { phone, email } = req.body;
+
+    // ── Email channel (admin side) ──────────────────────────────────────────
+    if (email && email.toString().trim()) {
+      const check = await validateEmailAddress(email);
+      if (!check.ok) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: check.reason });
+      }
+      const cleanEmail = check.email;
+
+      // Same answer whether or not the account exists, so this endpoint can't
+      // be used to discover which admin emails are registered.
+      const genericMessage = 'If that email belongs to an administrator or staff account, a verification code has been sent to it.';
+      const user = await User.findOne({ email: cleanEmail });
+      if (!user || !NON_PATIENT_ROLES.includes(user.role) || !user.isActive) {
+        return res.status(HttpStatus.OK).json({
+          success: true,
+          message: genericMessage,
+          resetId: new (require('mongoose').Types.ObjectId)(), // decoy; step 2 will simply fail
+        });
+      }
+
+      const otpCode = generateOTPCode();
+      const reset = await PasswordReset.findOneAndUpdate(
+        { phone: `email:${cleanEmail}` }, // `phone` is the model's unique key; email resets use a prefixed value
+        {
+          user: user._id,
+          phone: `email:${cleanEmail}`,
+          email: cleanEmail,
+          channel: 'email',
+          otp: hashOtp(otpCode),
+          otpExpires: new Date(Date.now() + 5 * 60 * 1000),
+          otpAttempts: 0,
+          resetToken: null,
+          resetTokenExpires: null,
+          createdAt: new Date(),
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      const mailResult = await sendOTPEmail(cleanEmail, otpCode, 5);
+      if (!mailResult.success) {
+        console.error(`Reset OTP email not delivered to ${cleanEmail}:`, mailResult.error);
+        if (mailResult.mock && !isProd) {
+          return res.status(HttpStatus.OK).json({
+            success: true,
+            message: 'Email is not configured (dev mode) — the reset code is in the server log.',
+            resetId: reset._id,
+            devOtp: otpCode,
+          });
+        }
+        await PasswordReset.findByIdAndDelete(reset._id).catch(() => {});
+        return res.status(HttpStatus.BAD_GATEWAY).json({
+          success: false,
+          message: "We couldn't send the email right now. Please try again in a few minutes.",
+        });
+      }
+
+      return res.status(HttpStatus.OK).json({ success: true, message: genericMessage, resetId: reset._id });
+    }
+
+    // ── SMS channel (patients, staff) ───────────────────────────────────────
     if (!phone || !phone.trim()) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
-        message: 'Phone number is required.',
+        message: 'Email or phone number is required.',
       });
     }
     const cleanPhone = normalizePhone(phone);
@@ -523,17 +618,23 @@ const forgotPassword = async (req, res) => {
         message: 'No account found with that phone number.',
       });
     }
+    if (ADMIN_ROLES.includes(user.role)) {
+      return res.status(HttpStatus.FORBIDDEN).json({
+        success: false,
+        message: 'Administrator accounts reset their password by email. Please use your email address.',
+      });
+    }
 
     const otpCode = generateOTPCode();
-    const otpExpires = new Date(Date.now() + 5 * 60 * 1000);
-
     const reset = await PasswordReset.findOneAndUpdate(
       { phone: cleanPhone },
       {
         user: user._id,
         phone: cleanPhone,
-        otp: otpCode,
-        otpExpires,
+        channel: 'sms',
+        otp: hashOtp(otpCode),
+        otpExpires: new Date(Date.now() + 5 * 60 * 1000),
+        otpAttempts: 0,
         resetToken: null,
         resetTokenExpires: null,
         createdAt: new Date(),
@@ -543,23 +644,27 @@ const forgotPassword = async (req, res) => {
 
     const smsResult = await sendOTP(cleanPhone, otpCode);
 
-    if (!smsResult.mock && !smsResult.success) {
-      console.error(`Password reset OTP SMS failed for ${cleanPhone}:`, smsResult.error);
-      return res.status(HttpStatus.OK).json({
-        success: true,
-        message: `Code generated, but the SMS could not be sent (${smsResult.error || 'unknown error'}). Use the code below for now.`,
-        resetId: reset._id,
-        devOtp: otpCode,
+    if (!smsDelivered(smsResult)) {
+      console.error(`Password reset OTP SMS not delivered for ${cleanPhone}:`, smsResult.error || 'SMS not configured');
+      if (smsResult.mock && !isProd) {
+        return res.status(HttpStatus.OK).json({
+          success: true,
+          message: 'SMS is not configured (dev mode) — the reset code is in the server log.',
+          resetId: reset._id,
+          devOtp: otpCode,
+        });
+      }
+      await PasswordReset.findByIdAndDelete(reset._id).catch(() => {});
+      return res.status(HttpStatus.BAD_GATEWAY).json({
+        success: false,
+        message: "We couldn't send the SMS right now. Please try again in a few minutes.",
       });
     }
 
     return res.status(HttpStatus.OK).json({
       success: true,
-      message: smsResult.mock
-        ? 'SMS is not configured, so check the server logs for your reset code.'
-        : 'A verification code has been sent to your phone.',
+      message: 'A verification code has been sent to your phone.',
       resetId: reset._id,
-      ...(smsResult.mock ? { devOtp: otpCode } : {}),
     });
   } catch (err) {
     console.error('Forgot Password Error:', err.message);
@@ -598,10 +703,22 @@ const verifyResetOtp = async (req, res) => {
       });
     }
 
-    if (reset.otp !== otp.toString().trim()) {
+    // Attempt cap is checked BEFORE comparing, so a correct guess after the
+    // limit is still refused (same rule as the registration OTP).
+    if ((reset.otpAttempts || 0) >= MAX_RESET_OTP_ATTEMPTS) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Maximum attempts reached. Please request a new code.',
+      });
+    }
+
+    if (reset.otp !== hashOtp(otp.toString().trim())) {
+      reset.otpAttempts = (reset.otpAttempts || 0) + 1;
+      await reset.save();
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'Invalid OTP code.',
+        attemptsRemaining: Math.max(0, MAX_RESET_OTP_ATTEMPTS - reset.otpAttempts),
       });
     }
 
@@ -692,6 +809,12 @@ const resetPassword = async (req, res) => {
     // Fully consumed — remove rather than just flag, so nothing lingers
     // that could be replayed.
     await PasswordReset.findByIdAndDelete(reset._id);
+
+    // Security notice — lets the account owner spot an unauthorized reset.
+    // Fire-and-forget: a mail failure must not undo a successful reset.
+    if (user.email && NON_PATIENT_ROLES.includes(user.role)) {
+      sendPasswordChangedEmail(user.email).catch(() => {});
+    }
 
     return res.status(HttpStatus.OK).json({
       success: true,

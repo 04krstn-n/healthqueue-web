@@ -3,6 +3,8 @@
  * Access: facility_admin (own clinic), super_admin (all)
  */
 const mongoose = require('mongoose');
+const { validateEmailAddress } = require('../services/emailService');
+const { validatePasswordStrength } = require('./authController');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
 const { logAction } = require('../utils/auditLog');
@@ -78,12 +80,21 @@ const createStaff = async (req, res) => {
   try {
     const { fullName, email, phone, gender, role, specialization, licenseNumber, clinicId, password } = req.body;
 
-    console.log('CREATE STAFF BODY:', req.body);
-    console.log('RECEIVED GENDER:', gender);
-
     if (!fullName || !email) {
       if (session) await session.abortTransaction();
       return res.status(400).json({ message: 'Name and email are required.' });
+    }
+
+    // The facility admin chooses the staff member's initial password; the
+    // system never generates or defaults one.
+    if (!password || typeof password !== 'string') {
+      if (session) await session.abortTransaction();
+      return res.status(400).json({ message: 'A password for the new staff account is required.' });
+    }
+    const passwordProblems = validatePasswordStrength(password);
+    if (passwordProblems.length > 0) {
+      if (session) await session.abortTransaction();
+      return res.status(400).json({ message: `Password must contain ${passwordProblems.join(', ')}.` });
     }
 
     const targetClinic = clinicId || req.user.clinicId;
@@ -97,7 +108,12 @@ const createStaff = async (req, res) => {
       return res.status(403).json({ message: 'Cannot create staff for another clinic.' });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const emailCheck = await validateEmailAddress(email);
+    if (!emailCheck.ok) {
+      if (session) await session.abortTransaction();
+      return res.status(400).json({ message: emailCheck.reason });
+    }
+    const normalizedEmail = emailCheck.email;
     const existing = await User.findOne({ email: normalizedEmail }).session(session);
     if (existing) {
       if (session) await session.abortTransaction();
@@ -111,7 +127,8 @@ const createStaff = async (req, res) => {
           fullName: fullName.trim(),
           email: normalizedEmail,
           phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
-          password: password || 'Staff@123',
+          password,
+          mustChangePassword: true,
           role: 'staff',
           clinicId: targetClinic,
           isVerified: true,

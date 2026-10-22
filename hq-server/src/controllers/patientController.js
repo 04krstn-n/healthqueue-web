@@ -3,6 +3,7 @@
  */
 const Patient = require('../models/Patient');
 const User = require('../models/User');
+const { validateEmailAddress } = require('../services/emailService');
 const QueueEntry = require('../models/QueueEntry');
 const Appointment = require('../models/Appointment');
 const { HttpStatus } = require('../config/config');
@@ -90,6 +91,10 @@ const createPatient = async (req, res) => {
 
     let userId = null;
     if (email) {
+      const emailCheck = await validateEmailAddress(email);
+      if (!emailCheck.ok) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: emailCheck.reason });
+      }
       const existing = await User.findOne({ email: email.toLowerCase().trim() });
       if (existing) {
         userId = existing._id;
@@ -98,7 +103,10 @@ const createPatient = async (req, res) => {
           fullName: fullName.trim(),
           email: email.toLowerCase().trim(),
           phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
-          password: 'Patient@123',
+          // Nobody is ever given this: it's a random, unguessable value so the
+          // record has a valid hash. The patient sets a real password through
+          // Forgot Password (by phone) or by registering in the app.
+          password: require('crypto').randomBytes(24).toString('hex') + 'Aa1!',
           role: 'patient',
           isVerified: true,
         });
