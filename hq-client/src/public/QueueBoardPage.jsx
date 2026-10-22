@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { io } from 'socket.io-client'
-import { publicApi } from '../../services/api'
+import { publicApi } from '../services/api'
 import styles from './queueBoard.module.css'
 
 const SOCKET_URL = (import.meta.env.VITE_API_URL || 'http://localhost:4000')
