@@ -2,6 +2,9 @@
  * Queue Controller — Live queue management, remote en-route enrollment, and 5-min grace period
  */
 const mongoose = require('mongoose');
+const { resolveServices } = require('../utils/serviceSelection');
+const { isOpenAt } = require('../utils/clinicHours');
+const { groupByLine, busyByVisit, heldBy, holdText } = require('../utils/visitHold');
 const QueueEntry = require('../models/QueueEntry');
 const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
@@ -41,6 +44,8 @@ const todayRange = () => {
  * patient's position UP, which isn't something to notify about), so
  * joinQueue/addWalkIn don't need this.
  */
+// "I'm on my way" earns one extension of the arrival grace period, in minutes.
+const ON_THE_WAY_EXTENSION_MIN = 3;
 const POSITION_MILESTONES = [7, 5, 3, 1];
 // Walk-ins are reached by SMS, which costs credits per message, so they get
 // only the two messages that matter: "you're close" (#3) and "you're next" (#1).
@@ -49,16 +54,25 @@ const WALKIN_SMS_MILESTONES = [3, 1];
 const notifyPositionMilestones = async (clinicId) => {
   try {
     const waitingEntries = await QueueEntry.find({ clinic: clinicId, status: 'waiting' })
-      .select('patient patientPhone queueNumber lastNotifiedPosition priority queueType joinedAt createdAt')
+      .select('patient patientPhone queueNumber lastNotifiedPosition priority queueType joinedAt createdAt clinic serviceId serviceName visitId')
       .sort({ joinedAt: 1 });
 
     if (waitingEntries.length === 0) return;
 
+    // Each service has its own line, so milestones are per line. An entry that
+    // is on hold (the patient is at another service) keeps its place but is
+    // not told "you're next" — they are busy and cannot be called anyway.
     const ratio = await getPriorityRatio(clinicId);
-    const ordered = orderQueueByPriorityRatio(waitingEntries, ratio);
+    const busyMap = await busyByVisit(waitingEntries);
+    const ordered = [];
+    for (const group of groupByLine(waitingEntries).values()) {
+      ordered.push(...orderQueueByPriorityRatio(group, ratio).slice(0, Math.max(...POSITION_MILESTONES)));
+    }
 
     await Promise.all(
-      ordered.slice(0, Math.max(...POSITION_MILESTONES)).map(async (entry, idx) => {
+      ordered.map(async (entry) => {
+        const idx = (entry.queuePosition || 1) - 1;
+        if (heldBy(entry, busyMap)) return;
         const position = idx + 1;
         // App users get push at every milestone; walk-ins with a phone get SMS
         // at the shorter list; a walk-in with no phone can't be reached.
@@ -80,9 +94,9 @@ const notifyPositionMilestones = async (clinicId) => {
 
         // Only mark the milestone as sent if it really went out, so a failed
         // SMS is retried at the next queue change instead of being lost.
+        // (ordered entries are plain objects, so update by id rather than .save())
         if (result.success) {
-          entry.lastNotifiedPosition = position;
-          await entry.save();
+          await QueueEntry.updateOne({ _id: entry._id }, { $set: { lastNotifiedPosition: position } });
         }
       })
     );
@@ -163,18 +177,23 @@ const getQueueEntries = async (req, res) => {
     const waitingEntries = entries.filter((e) => e.status === 'waiting');
     const otherEntries = entries.filter((e) => e.status !== 'waiting');
 
+    // Each service has its own line, so the waiting bucket is ordered per
+    // (clinic, service) line. Entries of a multi-service visit whose patient
+    // is currently called/serving at another service are flagged onHold.
     const ratioByClinic = new Map();
-    const orderedWaitingByClinic = new Map();
-    for (const entry of waitingEntries) {
-      const cid = entry.clinic?._id?.toString() || entry.clinic?.toString();
-      if (!orderedWaitingByClinic.has(cid)) orderedWaitingByClinic.set(cid, []);
-      orderedWaitingByClinic.get(cid).push(entry);
-    }
     const orderedWaiting = [];
-    for (const [cid, group] of orderedWaitingByClinic) {
+    for (const group of groupByLine(waitingEntries).values()) {
+      const cid = group[0].clinic?._id?.toString() || group[0].clinic?.toString();
       if (!ratioByClinic.has(cid)) ratioByClinic.set(cid, await getPriorityRatio(cid));
       orderedWaiting.push(...orderQueueByPriorityRatio(group, ratioByClinic.get(cid)));
     }
+    const busyMap = await busyByVisit(entries);
+    const annotateHold = (obj) => {
+      const b = heldBy(obj, busyMap);
+      obj.onHold = Boolean(b);
+      obj.holdReason = b ? holdText(b) : '';
+      return obj;
+    };
 
     // Recompute each active entry's estimated wait time live rather than
     // trusting the value stored at join time — that snapshot never changed
@@ -189,7 +208,7 @@ const getQueueEntries = async (req, res) => {
         obj.estimatedWaitMinutes = await estimateWaitTime(cid, obj.serviceId, {
           peopleAheadOverride: obj.queuePosition - 1,
         });
-        return obj;
+        return annotateHold(obj);
       }),
       ...otherEntries.map(async (entry) => {
         const obj = entry.toObject();
@@ -197,6 +216,8 @@ const getQueueEntries = async (req, res) => {
           const cid = entry.clinic?._id?.toString() || entry.clinic?.toString();
           obj.estimatedWaitMinutes = await estimateWaitTime(cid, entry.serviceId, { peopleAheadOverride: 0 });
         }
+        obj.onHold = false;
+        obj.holdReason = '';
         return obj;
       }),
     ]);
@@ -248,43 +269,42 @@ const joinQueue = async (req, res) => {
       });
     }
 
-    // 2. If serviceName is missing, extract it from clinic.services using serviceId
-    if (!serviceName && serviceId && Array.isArray(clinic.services)) {
-      const foundService = clinic.services.find(
-        (s) => s._id?.toString() === serviceId.toString() || s.id?.toString() === serviceId.toString()
-      );
-      if (foundService) {
-        serviceName = foundService.name || foundService.serviceName;
-      }
-    }
-
-    // 3. Fallback: if no service matched or none provided, take the first clinic service
-    if (!serviceName && clinic.services && clinic.services.length > 0) {
-      serviceName = clinic.services[0].name || clinic.services[0].serviceName;
-      serviceId = serviceId || clinic.services[0]._id;
-    }
-
-    // 4. Validate that a service name exists
-    if (!serviceName) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ 
-        success: false, 
-        message: 'A valid serviceId or serviceName is required.' 
+    // 2. Time check: remote queueing is only open during the clinic's
+    // operating hours (Philippine time). Unparseable hours text -> allowed.
+    if (isOpenAt(clinic.operatingHours) === false) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `The clinic is not accepting queue entries right now. Operating hours: ${clinic.operatingHours}.`,
       });
     }
 
-    // Prevent duplicate active queue entries today
-    const existing = await QueueEntry.findOne({
+    // 3. Services: one or several, each must belong to this clinic.
+    // No silent fallback to the first service any more.
+    const picked = resolveServices(clinic, req.body);
+    if (!picked.ok) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: picked.message });
+    }
+    serviceName = picked.serviceName;
+    serviceId = picked.serviceId;
+
+    // One entry (and one line) per selected service. A patient may not hold two
+    // active tickets for the SAME service at the same clinic today.
+    const ACTIVE = ['waiting', 'serving', 'called'];
+    const sameServiceFilter = (svc) => ({
       clinic: clinicId,
       patient: req.user._id,
-      status: { $in: ['waiting', 'serving', 'called'] },
+      status: { $in: ACTIVE },
       joinedAt: todayRange(),
+      ...(svc.serviceId ? { serviceId: svc.serviceId } : { serviceName: svc.name }),
     });
-
-    if (existing) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ 
-        success: false, 
-        message: "You already have an active queue ticket at this clinic." 
-      });
+    for (const svc of picked.services) {
+      const existing = await QueueEntry.findOne(sameServiceFilter(svc));
+      if (existing) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          success: false,
+          message: `You already have an active queue ticket for ${svc.name} at this clinic.`,
+        });
+      }
     }
 
     // Auto-create/sync patient profile
@@ -299,97 +319,111 @@ const joinQueue = async (req, res) => {
       });
     }
 
-    const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
-    const queueNumber = await getNextQueueNumber(clinicId, prefix);
-    const estWait = await estimateWaitTime(clinicId, serviceId);
-    const activeCount = await QueueEntry.countDocuments({
-      clinic: clinicId,
-      status: { $in: ['waiting', 'serving', 'called'] },
-      joinedAt: todayRange(),
-    });
-
     // Priority is derived ONLY from the patient's own stored record
     // (patient.patientType), which can only be changed by staff/admin via
-    // PUT /api/patients/:id (see patientController.updatePatient) — this
-    // used to also accept a `priority` boolean straight from the request
-    // body, which let any patient grant themselves priority queue
-    // placement just by adding a field to the join request.
+    // PUT /api/patients/:id — never from the request body.
     const isPriorityPatient = Boolean(patient.patientType && patient.patientType !== 'Regular');
+    const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
+    const visitId = new mongoose.Types.ObjectId();
+    // ONE ticket number per person per visit: the same number appears in every
+    // service line the patient joined (e.g. #Q054 waits in both Drug Test and
+    // Laboratory), while each line keeps its own position.
+    const queueNumber = await getNextQueueNumber(clinicId, prefix);
 
-    const entry = await QueueEntry.create({
-      clinic: clinicId,
-      patient: req.user._id,
-      patientName: patient.fullName || req.user.fullName,
-      patientPhone: patient.phone || req.user.phone || '',
-      patientType: patient.patientType || 'Regular',
-      serviceName,
-      serviceId: serviceId || null,
-      queueNumber,
-      queueType: isPriorityPatient ? 'Priority' : 'Regular',
-      priority: isPriorityPatient,
-      joinedRemotely: joinedRemotely !== undefined ? joinedRemotely : true,
-      notes: notes || '',
-      estimatedWaitMinutes: estWait,
-      positionAtJoin: activeCount + 1,
-      joinedAt: new Date(),
-    });
+    const created = [];
+    for (const svc of picked.services) {
+      const lineFilter = {
+        clinic: clinicId,
+        status: { $in: ACTIVE },
+        joinedAt: todayRange(),
+        ...(svc.serviceId ? { serviceId: svc.serviceId } : { serviceName: svc.name }),
+      };
+      const aheadInLine = await QueueEntry.countDocuments(lineFilter);
+      const estWait = await estimateWaitTime(clinicId, svc.serviceId, { peopleAheadOverride: aheadInLine });
+
+      const entry = await QueueEntry.create({
+        clinic: clinicId,
+        patient: req.user._id,
+        patientName: patient.fullName || req.user.fullName,
+        patientPhone: patient.phone || req.user.phone || '',
+        patientType: patient.patientType || 'Regular',
+        serviceName: svc.name,
+        serviceId: svc.serviceId || null,
+        services: [{ serviceId: svc.serviceId || null, name: svc.name }],
+        visitId,
+        queueNumber,
+        queueType: isPriorityPatient ? 'Priority' : 'Regular',
+        priority: isPriorityPatient,
+        joinedRemotely: joinedRemotely !== undefined ? joinedRemotely : true,
+        notes: notes || '',
+        estimatedWaitMinutes: estWait,
+        positionAtJoin: aheadInLine + 1,
+        joinedAt: new Date(),
+      });
+      created.push({ entry, svc, aheadInLine, estWait });
+    }
 
     // Race guard. The "already has an active ticket" check above is a read
     // followed by a write, so two simultaneous join requests (double-tap,
     // retry after a flaky connection, two devices) can both pass it. Re-count
-    // AFTER inserting: every racer sees the same set of tickets, and the one
-    // with the highest _id removes itself, so exactly one survives.
-    const racers = await QueueEntry.find({
-      clinic: clinicId,
-      patient: req.user._id,
-      status: { $in: ['waiting', 'serving', 'called'] },
-      joinedAt: todayRange(),
-    }).select('_id').sort({ _id: 1 }).lean();
-    if (racers.length > 1 && String(racers[0]._id) !== String(entry._id)) {
-      await QueueEntry.deleteOne({ _id: entry._id });
-      return res.status(HttpStatus.BAD_REQUEST).json({
-        success: false,
-        message: 'You already have an active queue ticket at this clinic.',
-      });
+    // AFTER inserting, per service: every racer sees the same set of tickets,
+    // and the request whose entry has the highest _id removes ALL of its own
+    // entries, so exactly one request survives.
+    for (const { entry, svc } of created) {
+      const racers = await QueueEntry.find(sameServiceFilter(svc)).select('_id').sort({ _id: 1 }).lean();
+      if (racers.length > 1 && String(racers[0]._id) !== String(entry._id)) {
+        await QueueEntry.deleteMany({ _id: { $in: created.map((c) => c.entry._id) } });
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          success: false,
+          message: `You already have an active queue ticket for ${svc.name} at this clinic.`,
+        });
+      }
     }
 
-    // Increment live clinic queue counters
+    const first = created[0];
     await Clinic.findByIdAndUpdate(clinicId, {
-      $inc: { queueLength: 1 },
-      currentWaitingTime: estWait,
+      $inc: { queueLength: created.length },
+      currentWaitingTime: first.estWait,
     });
 
-    // In-app notification + push (see utils/notify.js) — the push is what
-    // reaches the patient if the app is backgrounded or closed; the old
-    // Notification.create() call alone only ever showed up the next time
-    // they opened the app.
+    const ticketList = created.map((c) => `#${c.entry.queueNumber} (${c.svc.name})`).join(', ');
     await notifyUser(req.user._id, {
       title: 'Queue Joined',
-      message: `You joined the queue at ${clinic.name}. Queue Ticket #${queueNumber}. Est. wait: ${estWait} mins.`,
+      message: created.length === 1
+        ? `You joined the queue at ${clinic.name}. Queue Ticket #${first.entry.queueNumber}. Est. wait: ${first.estWait} mins.`
+        : `You joined ${created.length} lines at ${clinic.name}: ${ticketList}. If one service calls you first, your other lines are paused until you are done there.`,
       type: 'queue',
       refType: 'QueueEntry',
-      refId: entry._id,
+      refId: first.entry._id,
     });
 
-    // Trigger real-time Socket.io broadcast to staff tablets
-    emitQueueUpdate(req, clinicId, 'queue_entry_added', { entry, activeCount: activeCount + 1 });
+    for (const c of created) {
+      emitQueueUpdate(req, clinicId, 'queue_entry_added', { entry: c.entry, activeCount: c.aheadInLine + 1 });
+    }
+
+    const shape = (c) => ({
+      _id: c.entry._id,
+      queueNumber: c.entry.queueNumber,
+      clinicName: clinic.name,
+      serviceName: c.entry.serviceName,
+      status: c.entry.status,
+      joinedAt: c.entry.joinedAt,
+      joinedRemotely: c.entry.joinedRemotely,
+      position: c.aheadInLine + 1,
+      peopleAhead: c.aheadInLine,
+      estimatedWaitTime: c.estWait,
+    });
 
     return res.status(HttpStatus.CREATED).json({
       success: true,
-      message: 'Joined queue successfully.',
-      data: entry,
-      entry: {
-        _id: entry._id,
-        queueNumber: entry.queueNumber,
-        clinicName: clinic.name,
-        serviceName: entry.serviceName,
-        status: entry.status,
-        joinedAt: entry.joinedAt,
-        joinedRemotely: entry.joinedRemotely,
-      },
-      position: activeCount + 1,
-      peopleAhead: activeCount,
-      estimatedWaitTime: estWait,
+      message: created.length === 1 ? 'Joined queue successfully.' : `Joined ${created.length} service lines.`,
+      data: first.entry,          // legacy single-entry fields = the first service
+      entry: shape(first),
+      entries: created.map(shape), // every line the patient joined
+      visitId,
+      position: first.aheadInLine + 1,
+      peopleAhead: first.aheadInLine,
+      estimatedWaitTime: first.estWait,
     });
   } catch (err) {
     console.error('joinQueue Error:', err.message);
@@ -401,56 +435,88 @@ const joinQueue = async (req, res) => {
 };
 
 // GET /api/queues/my-status — Real-time queue status for patient mobile dashboard
+// A patient can be in several service lines at once (one entry per service).
+// `entry`/`position`/... describe the PRIMARY entry (the one called/serving,
+// otherwise the one closest to the front) so older app versions keep working;
+// `entries` lists every active line with its own position and hold status.
 const getMyQueueStatus = async (req, res) => {
   try {
-    const entry = await QueueEntry.findOne({
+    const mine = await QueueEntry.find({
       patient: req.user._id,
       status: { $in: ['waiting', 'serving', 'called'] },
       joinedAt: todayRange(),
     }).populate('clinic', 'name address city');
 
-    if (!entry) {
-      return res.status(HttpStatus.OK).json({ success: true, activeQueue: false, entry: null });
+    if (mine.length === 0) {
+      return res.status(HttpStatus.OK).json({ success: true, activeQueue: false, entry: null, entries: [] });
     }
 
-    // Same priority-ratio ordering the tablet sees (item 1/4) — "ahead of
-    // me" must mean the same thing for the patient as it does for staff,
-    // not a plain join-order count that ignores approved priority status.
-    let ahead = 0;
-    let estWait;
-    if (entry.status === 'waiting') {
-      const waitingEntries = await QueueEntry.find({
-        clinic: entry.clinic._id,
-        status: 'waiting',
-        joinedAt: todayRange(),
+    // Same priority-ratio ordering the tablet sees — "ahead of me" must mean
+    // the same thing for the patient as it does for staff, computed inside
+    // that service's own line.
+    const busyMap = await busyByVisit(mine);
+    const ratioByClinic = new Map();
+    const details = [];
+    for (const entry of mine) {
+      let ahead = 0;
+      let estWait;
+      if (entry.status === 'waiting') {
+        const cid = entry.clinic._id;
+        const lineMates = await QueueEntry.find({
+          clinic: cid,
+          status: 'waiting',
+          joinedAt: todayRange(),
+          ...(entry.serviceId ? { serviceId: entry.serviceId } : { serviceName: entry.serviceName }),
+        });
+        if (!ratioByClinic.has(String(cid))) ratioByClinic.set(String(cid), await getPriorityRatio(cid));
+        const ordered = orderQueueByPriorityRatio(lineMates, ratioByClinic.get(String(cid)));
+        const me = ordered.find((e) => String(e._id) === String(entry._id));
+        ahead = me ? me.queuePosition - 1 : 0;
+        estWait = await estimateWaitTime(cid, entry.serviceId, { peopleAheadOverride: ahead });
+      } else {
+        // Already called/serving — no one "ahead", they're at the counter.
+        estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId, { peopleAheadOverride: 0 });
+      }
+      const busy = heldBy(entry, busyMap);
+      details.push({
+        entry,
+        ahead,
+        estWait,
+        onHold: Boolean(busy),
+        holdReason: busy ? holdText(busy) : '',
       });
-      const ratio = await getPriorityRatio(entry.clinic._id);
-      const ordered = orderQueueByPriorityRatio(waitingEntries, ratio);
-      const mine = ordered.find((e) => String(e._id) === String(entry._id));
-      ahead = mine ? mine.queuePosition - 1 : 0;
-      estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId, { peopleAheadOverride: ahead });
-    } else {
-      // Already called/serving — no one "ahead", they're at the counter.
-      estWait = await estimateWaitTime(entry.clinic._id, entry.serviceId, { peopleAheadOverride: 0 });
     }
+
+    const rank = (d) => (d.entry.status === 'serving' ? 0 : d.entry.status === 'called' ? 1 : 2);
+    details.sort((a, b) => rank(a) - rank(b) || a.ahead - b.ahead);
+    const primary = details[0];
+
+    const shape = (d) => ({
+      _id: d.entry._id,
+      queueNumber: d.entry.queueNumber,
+      serviceName: d.entry.serviceName,
+      status: d.entry.status,
+      joinedAt: d.entry.joinedAt,
+      calledAt: d.entry.calledAt,
+      joinedRemotely: d.entry.joinedRemotely,
+      gracePeriodExpiresAt: d.entry.gracePeriodExpiresAt,
+      clinic: d.entry.clinic,
+      visitId: d.entry.visitId,
+      position: d.ahead + 1,
+      peopleAhead: d.ahead,
+      estimatedWaitTime: d.estWait,
+      onHold: d.onHold,
+      holdReason: d.holdReason,
+    });
 
     return res.status(HttpStatus.OK).json({
       success: true,
       activeQueue: true,
-      entry: {
-        _id: entry._id,
-        queueNumber: entry.queueNumber,
-        serviceName: entry.serviceName,
-        status: entry.status,
-        joinedAt: entry.joinedAt,
-        calledAt: entry.calledAt,
-        joinedRemotely: entry.joinedRemotely,
-        gracePeriodExpiresAt: entry.gracePeriodExpiresAt,
-        clinic: entry.clinic,
-      },
-      position: ahead + 1,
-      peopleAhead: ahead,
-      estimatedWaitTime: estWait,
+      entry: shape(primary),
+      entries: details.map(shape),
+      position: primary.ahead + 1,
+      peopleAhead: primary.ahead,
+      estimatedWaitTime: primary.estWait,
     });
   } catch (err) {
     console.error('getMyQueueStatus Error:', err.message);
@@ -469,7 +535,7 @@ const callPatient = async (req, res) => {
     // the 5-minute grace period / re-notifying the patient for a ticket
     // that's already past that stage — and the UI must not be the only
     // thing preventing it (a direct API call would otherwise still work).
-    const existing = await QueueEntry.findById(req.params.id).select('status');
+    const existing = await QueueEntry.findById(req.params.id).select('status visitId');
     if (!existing) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
@@ -477,6 +543,19 @@ const callPatient = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: `Cannot call a patient with status "${existing.status}". Only a waiting entry can be called.`,
+      });
+    }
+
+    // Multi-service visit: first call wins. If the patient is already called or
+    // being served at another service, this entry is ON HOLD — refuse, so staff
+    // call the next patient instead of waiting on someone who is busy elsewhere.
+    const busyNow = await busyByVisit([existing]);
+    const blocker = heldBy(existing, busyNow);
+    if (blocker) {
+      return res.status(HttpStatus.CONFLICT).json({
+        success: false,
+        onHold: true,
+        message: `This patient is ${holdText(blocker).toLowerCase()} right now. Call the next patient — this ticket will be callable again once they are done there.`,
       });
     }
 
@@ -499,6 +578,25 @@ const callPatient = async (req, res) => {
       });
     }
 
+    // Race: two services may call the same patient at the same instant and both
+    // pass the check above. Re-read the siblings; the call that came second
+    // (later calledAt, _id breaks ties) is undone so exactly one call stands.
+    if (entry.visitId) {
+      const rivals = await QueueEntry.find({
+        visitId: entry.visitId, _id: { $ne: entry._id }, status: { $in: ['called', 'serving'] },
+      }).select('calledAt').lean();
+      const iAmLater = rivals.some((r) => !r.calledAt || r.calledAt < entry.calledAt
+        || (String(r.calledAt) === String(entry.calledAt) && String(r._id) < String(entry._id)));
+      if (iAmLater) {
+        await QueueEntry.findByIdAndUpdate(entry._id, { $set: { status: 'waiting' }, $unset: { calledAt: '', gracePeriodExpiresAt: '' } });
+        return res.status(HttpStatus.CONFLICT).json({
+          success: false,
+          onHold: true,
+          message: 'This patient was just called by another service. Call the next patient.',
+        });
+      }
+    }
+
     // Trigger push notification — only when the ticket is linked to a real
     // patient account. Walk-in tickets (added via /add-walkin) never have a
     // `patient` user set, and Notification.user is required, so this used
@@ -510,7 +608,7 @@ const callPatient = async (req, res) => {
     const calledNotice = await notifyQueueEntry(entry, {
       kind: 'called',
       title: 'It is your turn!',
-      message: `Ticket #${entry.queueNumber} — Please proceed to the counter within 5 minutes.`,
+      message: `Ticket #${entry.queueNumber} (${entry.serviceName}) — Please proceed to the counter within 5 minutes.`,
     });
 
     // Push Socket.io real-time event to patient mobile app
@@ -777,7 +875,7 @@ const requeueEntry = async (req, res) => {
 
     await QueueEntry.findByIdAndUpdate(entry._id, {
       $set: { status: 'waiting' },
-      $unset: { calledAt: '', gracePeriodExpiresAt: '' },
+      $unset: { calledAt: '', gracePeriodExpiresAt: '', autoExpiredAt: '' },
     });
 
     // skip/no-show decremented the live counter — restore it now that the
@@ -817,12 +915,39 @@ const markOnTheWay = async (req, res) => {
       });
     }
 
+    // "I'm on my way" is the patient's own word, not proof of arrival, so it
+    // never starts service and never stops the timer. It earns ONE extension of
+    // the grace period (+3 min) so someone genuinely walking over isn't marked
+    // no-show a moment before arriving. Atomic: a double tap cannot extend twice.
+    let expiresAt = entry.gracePeriodExpiresAt;
+    let extended = false;
+    if (!entry.graceExtended && entry.gracePeriodExpiresAt && new Date(entry.gracePeriodExpiresAt) > new Date()) {
+      const newExpiry = new Date(new Date(entry.gracePeriodExpiresAt).getTime() + ON_THE_WAY_EXTENSION_MIN * 60 * 1000);
+      const upd = await QueueEntry.findOneAndUpdate(
+        { _id: entry._id, status: 'called', graceExtended: { $ne: true } },
+        { $set: { graceExtended: true, onTheWayAt: new Date(), gracePeriodExpiresAt: newExpiry } },
+        { new: true }
+      );
+      if (upd) { expiresAt = upd.gracePeriodExpiresAt; extended = true; }
+    } else if (!entry.onTheWayAt) {
+      await QueueEntry.updateOne({ _id: entry._id }, { $set: { onTheWayAt: new Date() } });
+    }
+
     emitQueueUpdate(req, entry.clinic, 'patient_on_the_way', {
       entryId: entry._id,
       queueNumber: entry.queueNumber,
+      gracePeriodExpiresAt: expiresAt,
+      extended,
     });
 
-    return res.status(HttpStatus.OK).json({ success: true, message: 'Staff notified.' });
+    return res.status(HttpStatus.OK).json({
+      success: true,
+      message: extended
+        ? `Staff notified. You have ${ON_THE_WAY_EXTENSION_MIN} more minutes to arrive.`
+        : 'Staff notified.',
+      gracePeriodExpiresAt: expiresAt,
+      extended,
+    });
   } catch (err) {
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to notify staff.' });
   }
@@ -1093,6 +1218,7 @@ const clearWaitTimeOverride = async (req, res) => {
 };
 
 module.exports = {
+  notifyPositionMilestones,
   getQueueEntries,
   joinQueue,
   getMyQueueStatus,

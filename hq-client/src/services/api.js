@@ -96,6 +96,8 @@ export const usersApi = {
   create: (data) =>
     api.post('/api/users', data),
 
+  sendPassword: (id) => api.post(`/api/users/${id}/send-password`),
+
   update: (id, data) =>
     api.put(`/api/users/${id}`, data),
 
@@ -110,6 +112,8 @@ export const usersApi = {
 export const staffApi = {
   list: (params) => api.get('/api/users', { params: { ...params, role: 'staff' } }),
   create: (data) => api.post('/api/users', data),
+  sendPassword: (userId) => api.post(`/api/users/${userId}/send-password`),
+  updateUser: (userId, data) => api.put(`/api/users/${userId}`, data),
   update: (id, data) => api.put(`/api/users/${id}`, data),
   deactivate: (id) => api.delete(`/api/users/${id}`),
 }
@@ -232,6 +236,8 @@ export const systemConfigApi = {
 export const analyticsApi = {
   aiInsights: (clinicId) =>
     api.get('/api/analytics/ai-insights', { params: { clinicId } }),
+  effectiveness: (params) => api.get('/api/analytics/effectiveness', { params }),
+  addBaseline: (data) => api.post('/api/analytics/baseline', data),
 }
 
 // ── Notifications ─────────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
  */
 const mongoose = require('mongoose');
 const { validateEmailAddress } = require('../services/emailService');
-const { validatePasswordStrength } = require('./authController');
+const { generatePassword } = require('../utils/generatePassword');
 const Staff = require('../models/Staff');
 const User = require('../models/User');
 const { logAction } = require('../utils/auditLog');
@@ -20,7 +20,7 @@ const getStaff = async (req, res) => {
     }
 
     const staff = await Staff.find(filter)
-      .populate('user', 'email isActive phone')
+      .populate('user', 'email isActive phone mustChangePassword passwordSentAt')
       .populate('clinic', 'name')
       .sort({ createdAt: -1 });
 
@@ -34,7 +34,7 @@ const getStaff = async (req, res) => {
 const getStaffMember = async (req, res) => {
   try {
     const member = await Staff.findById(req.params.id)
-      .populate('user', 'email isActive phone')
+      .populate('user', 'email isActive phone mustChangePassword passwordSentAt')
       .populate('clinic', 'name');
 
     if (!member) {
@@ -78,23 +78,11 @@ const createStaff = async (req, res) => {
   }
 
   try {
-    const { fullName, email, phone, gender, role, specialization, licenseNumber, clinicId, password } = req.body;
+    const { fullName, email, phone, gender, role, specialization, licenseNumber, clinicId } = req.body;
 
     if (!fullName || !email) {
       if (session) await session.abortTransaction();
       return res.status(400).json({ message: 'Name and email are required.' });
-    }
-
-    // The facility admin chooses the staff member's initial password; the
-    // system never generates or defaults one.
-    if (!password || typeof password !== 'string') {
-      if (session) await session.abortTransaction();
-      return res.status(400).json({ message: 'A password for the new staff account is required.' });
-    }
-    const passwordProblems = validatePasswordStrength(password);
-    if (passwordProblems.length > 0) {
-      if (session) await session.abortTransaction();
-      return res.status(400).json({ message: `Password must contain ${passwordProblems.join(', ')}.` });
     }
 
     const targetClinic = clinicId || req.user.clinicId;
@@ -114,6 +102,16 @@ const createStaff = async (req, res) => {
       return res.status(400).json({ message: emailCheck.reason });
     }
     const normalizedEmail = emailCheck.email;
+
+    const nameClash = await User.findOne({
+      fullName: new RegExp(`^${fullName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      role: 'staff',
+      clinicId: targetClinic,
+    }).session(session);
+    if (nameClash) {
+      if (session) await session.abortTransaction();
+      return res.status(409).json({ message: `A staff member named "${fullName.trim()}" already exists in this clinic. Add a middle initial or other detail to tell them apart.` });
+    }
     const existing = await User.findOne({ email: normalizedEmail }).session(session);
     if (existing) {
       if (session) await session.abortTransaction();
@@ -127,7 +125,9 @@ const createStaff = async (req, res) => {
           fullName: fullName.trim(),
           email: normalizedEmail,
           phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
-          password,
+          // Random and never shown/emailed; the real one is generated and
+          // emailed when the admin clicks "Send password".
+          password: generatePassword(16),
           mustChangePassword: true,
           role: 'staff',
           clinicId: targetClinic,
@@ -159,7 +159,7 @@ const createStaff = async (req, res) => {
     if (session) await session.commitTransaction();
 
     const populated = await Staff.findById(staffDoc._id)
-      .populate('user', 'email isActive phone')
+      .populate('user', 'email isActive phone mustChangePassword passwordSentAt')
       .populate('clinic', 'name');
 
     await logAction({
@@ -172,7 +172,7 @@ const createStaff = async (req, res) => {
       details: { role: staffDoc.role, email: staffDoc.email },
     });
 
-    return res.status(201).json(populated);
+    return res.status(201).json({ ...populated.toObject(), passwordSent: false });
   } catch (err) {
     if (session) await session.abortTransaction();
     console.error('❌ createStaff error:', err);
@@ -205,7 +205,7 @@ const updateStaff = async (req, res) => {
     }
 
     const updated = await Staff.findById(member._id)
-      .populate('user', 'email isActive phone')
+      .populate('user', 'email isActive phone mustChangePassword passwordSentAt')
       .populate('clinic', 'name');
 
     await logAction({

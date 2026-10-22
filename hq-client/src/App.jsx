@@ -8,7 +8,7 @@ import AppErrorBoundary from './components/shared/AppErrorBoundary'
 import LandingPage from './public/LandingPage'
 
 // Public waiting-room display (no login) — lazy so it stays out of the admin bundle
-const QueueBoardPage = lazy(() => import('./public/QueueBoardPage'))
+const QueueBoardPage = lazy(() => import('./pages/public/QueueBoardPage'))
 
 // Auth
 import LoginPage from './pages/auth/LoginPage'
@@ -25,6 +25,7 @@ const FacilityDashboard  = lazy(() => import('./pages/facility-admin/FacilityDas
 const QueuePage           = lazy(() => import('./pages/facility-admin/QueuePage'))
 const QueueOversightPage  = lazy(() => import('./pages/facility-admin/QueueOversightPage'))
 const SchedulePage        = lazy(() => import('./pages/facility-admin/SchedulePage'))
+const EffectivenessPage    = lazy(() => import('./pages/facility-admin/EffectivenessPage'))
 const StaffPage           = lazy(() => import('./pages/facility-admin/StaffPage'))
 const PatientsPage        = lazy(() => import('./pages/facility-admin/PatientsPage'))
 const ServicesPage        = lazy(() => import('./pages/facility-admin/ServicesPage'))
@@ -118,6 +119,7 @@ function AppRoutes() {
           <Route path="patients"     element={<PatientsPage />} />
           <Route path="services"     element={<ServicesPage />} />
           <Route path="reports"      element={<FacilityReportsPage />} />
+          <Route path="effectiveness" element={<EffectivenessPage />} />
           <Route path="chatbot"      element={<ChatbotAdminPage />} />
         </Route>
 

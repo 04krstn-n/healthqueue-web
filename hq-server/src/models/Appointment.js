@@ -34,6 +34,13 @@ const AppointmentSchema = new mongoose.Schema(
     // Service details
     serviceName: { type: String, required: true },
     serviceId:   { type: mongoose.Schema.Types.ObjectId, default: null },
+    // Every service the patient selected (serviceName/serviceId above hold the
+    // joined label and the first one, so older screens keep working).
+    services: [{
+      _id: false,
+      serviceId: { type: mongoose.Schema.Types.ObjectId, default: null },
+      name: { type: String, required: true },
+    }],
     
     // Appointment date and time
     appointmentDate: { type: Date, required: true, index: true },

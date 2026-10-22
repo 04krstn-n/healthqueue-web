@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react'
 import { staffApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
-import PasswordSetter, { validateNewPassword } from '../../components/shared/PasswordSetter'
+import EditEmailModal from '../../components/shared/EditEmailModal'
 import styles from './facility-admin.module.css'
 
 const SPECIALIZATION_OPTIONS = [
@@ -41,8 +41,6 @@ const EMPTY_FORM = {
   specialization: 'Healthcare Staff',
   customSpecialization: '',
   status: 'active',
-  password: '',
-  confirmPassword: '',
 }
 
 export default function StaffPage() {
@@ -54,11 +52,7 @@ export default function StaffPage() {
   const [search, setSearch] = useState('')
   const [specFilter, setSpecFilter] = useState('All')
   const [modal, setModal] = useState(null) // null | 'add' | 'edit' | 'view' | 'created'
-  // Holds the just-generated temp password so it can be shown in a
-  // persistent confirmation view instead of a 3-second toast — this value
-  // is hashed server-side immediately and can never be retrieved again
-  // after this response, so a toast that auto-dismisses risks losing it
-  // before anyone can copy it (see userController.createUser).
+  // The just-created account, shown in a confirmation view with a Send Password button.
   const [createdCredentials, setCreatedCredentials] = useState(null)
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState(EMPTY_FORM)
@@ -180,10 +174,6 @@ export default function StaffPage() {
     if (form.phone && !/^\d{11}$/.test(form.phone)) {
       errors.phone = 'Phone number must contain exactly 11 digits'
     }
-    if (modal !== 'edit') {
-      const pwError = validateNewPassword(form.password, form.confirmPassword)
-      if (pwError) errors.password = pwError
-    }
 
     const targetSpecialization =
       form.specialization === 'Other'
@@ -217,10 +207,15 @@ export default function StaffPage() {
         showToast('Staff member updated successfully')
         closeModal()
       } else {
-        // The facility admin chooses the staff member's initial password;
-        // the server validates it and never generates one.
-        await staffApi.create({ ...payload, password: form.password })
-        setCreatedCredentials({ fullName: payload.fullName })
+        // No password yet: the admin clicks "Send Password" next and the
+        // system generates one and emails it to the staff member.
+        const res = await staffApi.create(payload)
+        setCreatedCredentials({
+          fullName: payload.fullName,
+          email: payload.email,
+          userId: res?.data?.user?._id,
+          sent: false,
+        })
         setModal('created')
       }
 
@@ -229,6 +224,24 @@ export default function StaffPage() {
       showToast(e?.response?.data?.message || 'Failed to save staff member')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const [sendingId, setSendingId] = useState(null)
+  const [emailFix, setEmailFix] = useState(null) // staff row
+  const sendPasswordTo = async (userId, email) => {
+    if (!userId) return false
+    setSendingId(userId)
+    try {
+      const res = await staffApi.sendPassword(userId)
+      showToast(res?.data?.message || `Password emailed to ${email}`)
+      await loadStaff()
+      return true
+    } catch (e) {
+      showToast(e?.response?.data?.message || 'Failed to send password.')
+      return false
+    } finally {
+      setSendingId(null)
     }
   }
 
@@ -503,6 +516,11 @@ export default function StaffPage() {
                         <span className={`badge ${s.isActive ? 'badge-green' : 'badge-gray'}`}>
                           {s.isActive ? 'Active' : 'Inactive'}
                         </span>
+                        {s.isActive && s.user?.mustChangePassword && (
+                          <div style={{ fontSize: 11, marginTop: 4, fontWeight: 600, color: s.user.passwordSentAt ? '#059669' : '#D97706' }}>
+                            {s.user.passwordSentAt ? 'Password sent – awaiting first login' : 'Password not sent yet'}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
@@ -514,6 +532,20 @@ export default function StaffPage() {
                           >
                             View
                           </button>
+                          {s.isActive && s.user?.mustChangePassword && (
+                            <>
+                              <button
+                                className="btn btn-primary btn-sm"
+                                disabled={sendingId === s.user._id}
+                                onClick={() => sendPasswordTo(s.user._id, s.user.email || s.email)}
+                              >
+                                {sendingId === s.user._id ? 'Sending…' : s.user.passwordSentAt ? 'Resend Password' : 'Send Password'}
+                              </button>
+                              <button className="btn btn-outline btn-sm" onClick={() => setEmailFix(s)}>
+                                Fix Email
+                              </button>
+                            </>
+                          )}
                           <button
                             className="btn btn-outline btn-sm"
                             title="Edit"
@@ -669,18 +701,6 @@ export default function StaffPage() {
                   options={STATUS_OPTIONS}
                   onChange={(val) => handleFieldChange('status', val)}
                 />
-                {modal !== 'edit' && (
-                  <PasswordSetter
-                    password={form.password}
-                    confirm={form.confirmPassword}
-                    error={formErrors.password}
-                    onPassword={(v) => handleFieldChange('password', v)}
-                    onConfirm={(v) => {
-                      setForm((prev) => ({ ...prev, confirmPassword: v }))
-                      if (formErrors.password) setFormErrors((prev) => ({ ...prev, password: '' }))
-                    }}
-                  />
-                )}
               </div>
             </div>
             <div className="modal-footer">
@@ -704,19 +724,49 @@ export default function StaffPage() {
             </div>
             <div className="modal-body">
               <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 8 }}>
-                <strong>{createdCredentials.fullName}</strong>'s account is ready. Share the password you set with them directly.
+                <strong>{createdCredentials.fullName}</strong>'s account was created for{' '}
+                <strong>{createdCredentials.email}</strong>.{' '}
+                {createdCredentials.sent
+                  ? 'A generated password was emailed to them.'
+                  : 'Click Send Password so they receive a generated password by email.'}
               </p>
               <p style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5 }}>
-                They'll be required to set their own password the first time they log in.
+                They'll be required to set their own password the first time they log in. If the email address has a typo, close this and use "Fix Email" in the staff list.
               </p>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-primary" onClick={closeModal}>
-                Done
+              {!createdCredentials.sent && (
+                <button
+                  className="btn btn-primary"
+                  disabled={sendingId === createdCredentials.userId}
+                  onClick={async () => {
+                    const ok = await sendPasswordTo(createdCredentials.userId, createdCredentials.email)
+                    if (ok) setCreatedCredentials((c) => ({ ...c, sent: true }))
+                  }}
+                >
+                  {sendingId === createdCredentials.userId ? 'Sending…' : 'Send Password'}
+                </button>
+              )}
+              <button className="btn btn-outline" onClick={closeModal}>
+                {createdCredentials.sent ? 'Done' : 'Later'}
               </button>
             </div>
           </div>
         </div>
+      )}
+
+      {emailFix && (
+        <EditEmailModal
+          name={emailFix.fullName}
+          currentEmail={emailFix.user?.email || emailFix.email}
+          onClose={() => setEmailFix(null)}
+          onSave={async (email) => {
+            await staffApi.updateUser(emailFix.user._id, { email })
+            setEmailFix(null)
+            showToast('Email updated. Click Send Password to email the new address.')
+            await loadStaff()
+          }}
+        />
       )}
 
       {/* ── DEACTIVATE CONFIRMATION MODAL ── */}

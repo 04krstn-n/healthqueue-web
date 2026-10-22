@@ -165,6 +165,13 @@ app.use('/api/patient-type-requests', patientTypeRequestRoutes);
 app.use(notFound);
 app.use(errorHandler);
 
+// ─── Automatic 5-minute grace-period expiry ───────────────────────────────────
+// Marks `called` tickets whose grace period has passed as no-show, which also
+// frees the patient's other service lines. See services/graceSweeper.js.
+const { startGraceSweeper } = require('./services/graceSweeper');
+const { notifyPositionMilestones } = require('./controllers/queueController');
+startGraceSweeper({ io, onChange: (clinicId) => notifyPositionMilestones(clinicId).catch(() => {}) });
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`HealthQueue+ API running on port ${PORT} [${NODE_ENV}]`);

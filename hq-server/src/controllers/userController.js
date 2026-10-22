@@ -3,19 +3,19 @@
  */
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const { validateEmailAddress } = require('../services/emailService');
+const { validateEmailAddress, sendAccountCreatedEmail } = require('../services/emailService');
+const { generatePassword } = require('../utils/generatePassword');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
 const Staff = require('../models/Staff');
 const { logAction } = require('../utils/auditLog');
 const { validatePasswordStrength, normalizePhone } = require('./authController');
 
-// Passwords for accounts an admin creates on someone else's behalf
-// (super_admin -> facility_admin, facility_admin -> staff) are CHOSEN BY THE
-// CREATING ADMIN and sent in the request — the system never generates or
-// hard-codes one. The server enforces the same strength policy as patient
-// registration. mustChangePassword still forces the account's real owner to
-// replace it on first login, since the creator knows it.
+// Accounts an admin creates (super_admin -> facility_admin, facility_admin ->
+// staff) are created WITHOUT a usable password. The admin then clicks "Send
+// password": the SYSTEM generates a random password and emails it to the new
+// user (sendPassword below). Nobody types or sees it, and the user must change
+// it on first login (mustChangePassword). No default password exists anywhere.
 
 // GET /api/users
 const getUsers = async (req, res) => {
@@ -57,34 +57,25 @@ const getUser = async (req, res) => {
 
 // POST /api/users
 const createUser = async (req, res) => {
-  const { fullName, email, phone, role, clinicId, gender, specialization, password } = req.body;
+  const { fullName, email, phone, role, clinicId, gender, specialization } = req.body;
 
   if (!fullName || !email || !role) {
     return res.status(400).json({ message: 'fullName, email, and role are required.' });
   }
 
-  if (!password || typeof password !== 'string') {
-    return res.status(400).json({ message: 'A password for the new account is required.' });
-  }
-  const passwordProblems = validatePasswordStrength(password);
-  if (passwordProblems.length > 0) {
-    return res.status(400).json({ message: `Password must contain ${passwordProblems.join(', ')}.` });
-  }
-
-  // Phone used to be optional here, which silently broke Forgot Password
-  // for any admin/staff account created without one — forgotPassword()
-  // looks accounts up by phone, so an account with none simply can't use
-  // it. Required now so every admin/staff account this endpoint creates
-  // actually has a working recovery path.
-  if (!phone || !phone.trim()) {
-    return res.status(400).json({ message: 'A phone number is required (used for Forgot Password OTP verification).' });
-  }
-  const normalizedPhone = normalizePhone(phone);
+  // Phone is optional: admin/staff reset their password by EMAIL, so a phone
+  // number is no longer needed for recovery.
+  const normalizedPhone = phone && phone.trim() ? normalizePhone(phone) : undefined;
 
   const targetClinic = req.user.role === 'facility_admin' ? req.user.clinicId : (clinicId || null);
 
   if (req.user.role === 'facility_admin' && role !== 'staff') {
     return res.status(403).json({ message: 'Facility admins can only create staff accounts.' });
+  }
+  // There is exactly one System Administrator. It can only create Facility
+  // Administrators — never staff, patients/users, or another super admin.
+  if (req.user.role === 'super_admin' && role !== 'facility_admin') {
+    return res.status(403).json({ message: 'The System Administrator can only create Facility Administrator accounts.' });
   }
 
   const emailCheck = await validateEmailAddress(email);
@@ -110,7 +101,20 @@ const createUser = async (req, res) => {
       return res.status(409).json({ message: 'Email already registered.' });
     }
 
-    const existingPhone = await User.findOne({ phone: normalizedPhone }).session(session);
+    // Same-name guard: within one clinic, two admin/staff accounts of the same
+    // role may not share a full name (case-insensitive) — it makes audit logs
+    // and the queue's "served by" ambiguous. Different clinics are fine.
+    const nameClash = await User.findOne({
+      fullName: new RegExp(`^${fullName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      role,
+      clinicId: targetClinic || null,
+    }).session(session);
+    if (nameClash) {
+      if (session) await session.abortTransaction();
+      return res.status(409).json({ message: `A ${role === 'staff' ? 'staff member' : 'facility admin'} named "${fullName.trim()}" already exists${targetClinic ? ' in this clinic' : ''}. Add a middle initial or other detail to tell them apart.` });
+    }
+
+    const existingPhone = normalizedPhone ? await User.findOne({ phone: normalizedPhone }).session(session) : null;
     if (existingPhone) {
       if (session) await session.abortTransaction();
       return res.status(409).json({ message: 'This phone number is already in use by another account.' });
@@ -125,7 +129,9 @@ const createUser = async (req, res) => {
           fullName: fullName.trim(),
           email: normalizedEmail,
           phone: normalizedPhone,
-          password,
+          // Random, never emailed or shown: the real password is generated
+          // and emailed when the admin clicks "Send password".
+          password: generatePassword(16),
           mustChangePassword: true,
           role,
           clinicId: targetClinic,
@@ -170,6 +176,7 @@ const createUser = async (req, res) => {
     return res.status(201).json({
       success: true,
       data: user.toSafeObject(),
+      passwordSent: false,
     });
   } catch (err) {
     if (session) await session.abortTransaction();
@@ -177,6 +184,72 @@ const createUser = async (req, res) => {
     return res.status(500).json({ message: err.message || 'Failed to create user.' });
   } finally {
     if (session) session.endSession();
+  }
+};
+
+// POST /api/users/:id/send-password
+// Generates a fresh random password and emails it to the account's owner.
+// super_admin -> facility_admin / staff; facility_admin -> staff of own clinic.
+// Only while the account has not yet set its own password (mustChangePassword),
+// so an admin can never reset the password of someone already using the system.
+const SEND_COOLDOWN_MS = 30 * 1000;
+const sendPassword = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const allowedTarget = req.user.role === 'super_admin'
+      ? user.role === 'facility_admin'
+      : user.role === 'staff' && user.clinicId?.toString() === req.user.clinicId?.toString();
+    if (!allowedTarget) return res.status(403).json({ message: 'Access denied.' });
+
+    if (!user.isActive) return res.status(400).json({ message: 'This account is deactivated.' });
+    if (!user.mustChangePassword) {
+      return res.status(409).json({ message: 'This user already set their own password. They can use Forgot Password if they need a new one.' });
+    }
+    if (user.passwordSentAt && Date.now() - user.passwordSentAt.getTime() < SEND_COOLDOWN_MS) {
+      return res.status(429).json({ message: 'A password was just sent. Please wait a few seconds before resending.' });
+    }
+
+    const previousHash = user.password;
+    const previousSentAt = user.passwordSentAt || null;
+    const password = generatePassword();
+    user.password = password; // hashed by the pre-save hook
+    user.mustChangePassword = true;
+    user.passwordSentAt = new Date();
+    await user.save();
+
+    const mail = await sendAccountCreatedEmail(user.email, {
+      fullName: user.fullName,
+      role: user.role,
+      password,
+      createdBy: req.user?.fullName,
+    });
+
+    if (!mail.success) {
+      // Nobody received the new password — put the old state back.
+      await User.updateOne({ _id: user._id }, { password: previousHash, passwordSentAt: previousSentAt });
+      console.error(`Password email not delivered to ${user.email}:`, mail.error);
+      return res.status(502).json({
+        success: false,
+        message: `The password email could not be sent to ${user.email}. Check that the address is correct (edit it if needed) and try again.`,
+      });
+    }
+
+    await logAction({
+      actor: req.user,
+      action: 'update',
+      targetType: 'User',
+      targetId: user._id,
+      targetLabel: user.fullName,
+      clinicId: user.clinicId,
+      details: { event: 'password_sent', email: user.email },
+    });
+
+    return res.json({ success: true, message: `A generated password was emailed to ${user.email}.`, data: user.toSafeObject() });
+  } catch (err) {
+    console.error('❌ sendPassword error:', err);
+    return res.status(500).json({ message: 'Failed to send password.' });
   }
 };
 
@@ -204,7 +277,11 @@ const updateUser = async (req, res) => {
     if (gender !== undefined) user.gender = gender;
     if (specialization !== undefined) user.specialization = specialization;
 
-    if (email !== undefined && req.user.role === 'super_admin') {
+    // super_admin may always edit an email; a facility_admin may fix a typo on a
+    // staff account in their clinic until that person has set their own password.
+    const canEditEmail = req.user.role === 'super_admin'
+      || (req.user.role === 'facility_admin' && user.role === 'staff' && user.mustChangePassword);
+    if (email !== undefined && canEditEmail) {
       const emailCheck = await validateEmailAddress(email);
       if (!emailCheck.ok) {
         return res.status(400).json({ message: emailCheck.reason });
@@ -216,6 +293,7 @@ const updateUser = async (req, res) => {
           return res.status(409).json({ message: 'Email already registered to another account.' });
         }
         user.email = normalizedEmail;
+        user.passwordSentAt = null; // the old address got nothing usable; resend to the new one
       }
     }
 
@@ -227,7 +305,7 @@ const updateUser = async (req, res) => {
       if (isActive !== undefined) staffUpdate.isActive = isActive;
       if (gender !== undefined) staffUpdate.gender = gender;
       if (specialization !== undefined) staffUpdate.specialization = specialization;
-      if (email !== undefined && req.user.role === 'super_admin') staffUpdate.email = user.email;
+      if (email !== undefined && canEditEmail) staffUpdate.email = user.email;
       if (Object.keys(staffUpdate).length > 0) {
         await Staff.findOneAndUpdate({ user: user._id }, staffUpdate);
       }
@@ -420,6 +498,7 @@ module.exports = {
   getUsers,
   getUser,
   createUser,
+  sendPassword,
   updateUser,
   deactivateUser,
   deactivateMyAccount,

@@ -1,6 +1,9 @@
 /**
  * Appointment Controller — Booking, scheduling, and slot management
  */
+const mongoose = require('mongoose');
+const { resolveServices } = require('../utils/serviceSelection');
+const { slotInstant, slotWithinHours } = require('../utils/clinicHours');
 const Appointment = require('../models/Appointment');
 const Clinic = require('../models/Clinic');
 const Patient = require('../models/Patient');
@@ -56,35 +59,49 @@ const checkInAppointmentToQueue = async (appointment, req) => {
   const effectiveJoinedAt = computeEffectiveJoinedAt(appointment.appointmentDate, now);
 
   const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
+  // One entry (and one line) per booked service, linked by a shared visitId so
+  // the "first call wins" hold rules in utils/visitHold.js apply. A single-
+  // service appointment produces exactly one entry, as before.
+  const svcList = Array.isArray(appointment.services) && appointment.services.length > 0
+    ? appointment.services
+    : [{ serviceId: appointment.serviceId || null, name: appointment.serviceName }];
+  const visitId = new mongoose.Types.ObjectId();
+  const isPriority = Boolean(appointment.patientType && appointment.patientType !== 'Regular');
+  const entries = [];
+  // One ticket number for the whole visit, shared by every service line.
   const queueNumber = await getNextQueueNumber(appointment.clinic, prefix);
-  const estWait = await estimateWaitTime(appointment.clinic, appointment.serviceId);
-
-  const entry = await QueueEntry.create({
-    clinic: appointment.clinic,
-    patient: appointment.patient,
-    patientName: appointment.patientName,
-    patientPhone: appointment.patientPhone,
-    patientType: appointment.patientType || 'Regular',
-    serviceName: appointment.serviceName,
-    serviceId: appointment.serviceId || null,
-    queueNumber,
-    queueType: appointment.patientType && appointment.patientType !== 'Regular' ? 'Priority' : 'Regular',
-    priority: Boolean(appointment.patientType && appointment.patientType !== 'Regular'),
-    joinedRemotely: false,
-    estimatedWaitMinutes: estWait,
-    joinedAt: effectiveJoinedAt,
-  });
+  for (const svc of svcList) {
+    const estWait = await estimateWaitTime(appointment.clinic, svc.serviceId || null);
+    entries.push(await QueueEntry.create({
+      clinic: appointment.clinic,
+      patient: appointment.patient,
+      patientName: appointment.patientName,
+      patientPhone: appointment.patientPhone,
+      patientType: appointment.patientType || 'Regular',
+      serviceName: svc.name,
+      serviceId: svc.serviceId || null,
+      services: [{ serviceId: svc.serviceId || null, name: svc.name }],
+      visitId,
+      queueNumber,
+      queueType: isPriority ? 'Priority' : 'Regular',
+      priority: isPriority,
+      joinedRemotely: false,
+      estimatedWaitMinutes: estWait,
+      joinedAt: effectiveJoinedAt,
+    }));
+  }
+  const entry = entries[0];
 
   appointment.status = 'arrived';
   appointment.arrivedAt = now;
   appointment.queueEntry = entry._id;
   await appointment.save();
 
-  await Clinic.findByIdAndUpdate(appointment.clinic, { $inc: { queueLength: 1 } });
+  await Clinic.findByIdAndUpdate(appointment.clinic, { $inc: { queueLength: entries.length } });
 
   const io = req?.app?.get('io');
   if (io) {
-    io.to(`clinic_${appointment.clinic}`).emit('queue_entry_added', { entry, fromAppointment: true });
+    for (const e of entries) io.to(`clinic_${appointment.clinic}`).emit('queue_entry_added', { entry: e, fromAppointment: true });
   }
 
   return entry;
@@ -127,30 +144,36 @@ const bookAppointment = async (req, res) => {
       });
     }
 
-    // 1. Auto-fetch serviceName from clinic.services if serviceId is provided
-    if (!serviceName && serviceId && Array.isArray(clinic.services)) {
-      const foundService = clinic.services.find(
-        (s) => s._id?.toString() === serviceId.toString() || s.id?.toString() === serviceId.toString()
-      );
-      if (foundService) {
-        serviceName = foundService.name || foundService.serviceName;
-      }
+    // 1. Services: one or several, each must belong to this clinic. No silent
+    // fallback to the first service or to "General Consultation" any more.
+    const picked = resolveServices(clinic, req.body);
+    if (!picked.ok) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: picked.message });
+    }
+    serviceName = picked.serviceName;
+    serviceId = picked.serviceId;
+
+    // 2. A time slot is required (it used to silently default to 09:00 AM).
+    if (!timeSlot || slotInstant(appointmentDate, timeSlot) === null) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'A valid time slot is required (for example "09:00 AM").',
+      });
     }
 
-    // 2. Fallback to the first service if still not set
-    if (!serviceName && clinic.services && clinic.services.length > 0) {
-      serviceName = clinic.services[0].name || clinic.services[0].serviceName;
-      serviceId = serviceId || clinic.services[0]._id;
+    // 3. Time validation: not in the past, and inside the clinic's hours.
+    const slotAt = slotInstant(appointmentDate, timeSlot);
+    if (slotAt.getTime() <= Date.now()) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'That time has already passed. Please choose a future date and time.',
+      });
     }
-
-    // 3. Fallback default serviceName if none found
-    if (!serviceName) {
-      serviceName = 'General Consultation';
-    }
-
-    // 4. Default timeSlot if omitted
-    if (!timeSlot) {
-      timeSlot = '09:00 AM';
+    if (slotWithinHours(clinic.operatingHours, timeSlot) === false) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `That time is outside the clinic's operating hours (${clinic.operatingHours}).`,
+      });
     }
 
     const apptDate = new Date(appointmentDate);
@@ -179,6 +202,7 @@ const bookAppointment = async (req, res) => {
       staff: staffId || null,
       serviceName,
       serviceId: serviceId || null,
+      services: picked.services,
       appointmentDate: apptDate,
       timeSlot,
       endTime: endTime || '',
@@ -430,7 +454,14 @@ const getAvailableSlots = async (req, res) => {
     const counts = {};
     booked.forEach((a) => { counts[a.timeSlot] = (counts[a.timeSlot] || 0) + 1; });
 
-    const available = defaultSlots.filter((s) => (counts[s] || 0) < 3);
+    // Only offer slots that are still in the future and inside the clinic's hours.
+    const clinicDoc = await Clinic.findById(clinicId).select('operatingHours');
+    const available = defaultSlots.filter((s) => {
+      if ((counts[s] || 0) >= 3) return false;
+      const at = slotInstant(date, s);
+      if (at && at.getTime() <= Date.now()) return false;
+      return slotWithinHours(clinicDoc?.operatingHours, s) !== false;
+    });
 
     return res.status(HttpStatus.OK).json({ success: true, data: available });
   } catch (err) {

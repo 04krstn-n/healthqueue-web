@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { usersApi, clinicsApi } from '../../services/api'
-import PasswordSetter, { validateNewPassword } from '../../components/shared/PasswordSetter'
+import EditEmailModal from '../../components/shared/EditEmailModal'
 import styles from './super-admin.module.css'
  
 const ROLE_LABELS = {
@@ -17,7 +17,8 @@ const ROLE_BADGE = {
   patient: 'badge-green',
 }
  
-const CREATE_ROLES = ['facility_admin', 'staff', 'super_admin']
+// The one System Administrator can only create Facility Administrators.
+const CREATE_ROLES = ['facility_admin']
  
 const PERM_OPTIONS = [
   'full-access',
@@ -86,8 +87,6 @@ const EMPTY_USER_FORM = {
   phone: '',
   role: 'facility_admin',
   clinicId: '',
-  password: '',
-  confirmPassword: '',
 }
  
 export default function UserManagementPage() {
@@ -175,6 +174,22 @@ export default function UserManagementPage() {
     loadClinics()
   }, [loadUsers, loadClinics])
  
+  // ─── Send generated password / fix email ─────────────────────────────────────
+  const [sendingId, setSendingId] = useState(null)
+  const [emailFixUser, setEmailFixUser] = useState(null)
+  const handleSendPassword = async (u) => {
+    setSendingId(u._id)
+    try {
+      const res = await usersApi.sendPassword(u._id)
+      showToast(res?.data?.message || `Password emailed to ${u.email}`)
+      await loadUsers()
+    } catch (e) {
+      showToast(e?.response?.data?.message || 'Failed to send password.')
+    } finally {
+      setSendingId(null)
+    }
+  }
+
   // ─── User Creation Handlers ──────────────────────────────────────────────────
   const handleCreateUser = async () => {
     // Every field is required except the phone number.
@@ -184,8 +199,6 @@ export default function UserManagementPage() {
     if (!userForm.email.trim()) errors.email = 'Email address is required'
     if (!userForm.role) errors.role = 'Role is required'
     if (!userForm.clinicId) errors.clinicId = 'Please assign a clinic.'
-    const pwError = validateNewPassword(userForm.password, userForm.confirmPassword)
-    if (pwError) errors.password = pwError
  
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors)
@@ -199,17 +212,16 @@ export default function UserManagementPage() {
     setFormErrors({})
  
     try {
-      // The system administrator chooses the new account's password; the
-      // server validates it and never generates one.
       await usersApi.create({
         fullName: `${userForm.firstName.trim()} ${userForm.lastName.trim()}`.trim(),
         email: userForm.email.trim(),
         phone: userForm.phone.trim(),
         role: userForm.role,
         clinicId: userForm.clinicId || null,
-        password: userForm.password,
       })
-      setUserSuccess('User created successfully! Share the password you set with them directly — they will be asked to change it on first login.')
+      setUserSuccess(
+        `User created. Open the user list and click "Send Password" so ${userForm.email.trim()} receives a generated password.`
+      )
       setUserForm(EMPTY_USER_FORM)
       await loadUsers()
     } catch (e) {
@@ -618,6 +630,11 @@ export default function UserManagementPage() {
                           <span className={`badge ${u.isActive ? 'badge-green' : 'badge-gray'}`}>
                             {u.isActive ? 'Active' : 'Inactive'}
                           </span>
+                          {u.isActive && u.mustChangePassword && ['facility_admin', 'staff'].includes(u.role) && (
+                            <div style={{ fontSize: 11, marginTop: 4, color: u.passwordSentAt ? '#059669' : '#D97706', fontWeight: 600 }}>
+                              {u.passwordSentAt ? 'Password sent – awaiting first login' : 'Password not sent yet'}
+                            </div>
+                          )}
                         </td>
                         <td style={{ fontSize: 12, color: 'var(--muted)' }}>
                           {u.createdAt
@@ -630,6 +647,20 @@ export default function UserManagementPage() {
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {u.isActive && u.mustChangePassword && ['facility_admin', 'staff'].includes(u.role) && (
+                              <>
+                                <button
+                                  className="btn btn-primary btn-sm"
+                                  disabled={sendingId === u._id}
+                                  onClick={() => handleSendPassword(u)}
+                                >
+                                  {sendingId === u._id ? 'Sending…' : u.passwordSentAt ? 'Resend Password' : 'Send Password'}
+                                </button>
+                                <button className="btn btn-outline btn-sm" onClick={() => setEmailFixUser(u)}>
+                                  Fix Email
+                                </button>
+                              </>
+                            )}
                             {u.role === 'facility_admin' && u.isActive && (
                               <button className="btn btn-primary btn-sm" onClick={() => openAssign(u)}>
                                 Assign Clinic
@@ -676,7 +707,7 @@ export default function UserManagementPage() {
               <div>
                 <div className={styles.bannerTitle}>Create New User</div>
                 <div className={styles.bannerSub}>
-                  Add a new user to the HealthQueue+ system. You set the account's initial password below and hand it to the user directly.
+                  Add a new user to the HealthQueue+ system. Create the account, then click Send Password in the user list: the system generates a password and emails it to the new user, who must change it on first login.
                 </div>
               </div>
             </div>
@@ -819,20 +850,6 @@ export default function UserManagementPage() {
                     </div>
                   )}
                 </div>
-
-                <PasswordSetter
-                  password={userForm.password}
-                  confirm={userForm.confirmPassword}
-                  error={formErrors.password}
-                  onPassword={(v) => {
-                    setUserForm((f) => ({ ...f, password: v }))
-                    if (formErrors.password) setFormErrors((f) => ({ ...f, password: '' }))
-                  }}
-                  onConfirm={(v) => {
-                    setUserForm((f) => ({ ...f, confirmPassword: v }))
-                    if (formErrors.password) setFormErrors((f) => ({ ...f, password: '' }))
-                  }}
-                />
               </div>
             </div>
  
@@ -859,6 +876,20 @@ export default function UserManagementPage() {
         </div>
       )}
  
+      {emailFixUser && (
+        <EditEmailModal
+          name={emailFixUser.fullName}
+          currentEmail={emailFixUser.email}
+          onClose={() => setEmailFixUser(null)}
+          onSave={async (email) => {
+            await usersApi.update(emailFixUser._id, { email })
+            setEmailFixUser(null)
+            showToast('Email updated. Click Send Password to email the new address.')
+            await loadUsers()
+          }}
+        />
+      )}
+
       {/* ── ROLE MANAGEMENT DIRECTORY MODAL ── */}
       {showRoleManager && (
         <div className="modal-overlay" onClick={() => setShowRoleManager(false)}>

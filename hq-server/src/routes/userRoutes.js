@@ -4,6 +4,7 @@ const {
   getUsers,
   getUser,
   createUser,
+  sendPassword,
   updateUser,
   deactivateUser,
   deactivateMyAccount,
@@ -27,6 +28,9 @@ router
   .put(updateMyPatientProfile);
 
 // ─── Admin User Management Endpoints ──────────────────────────────────────────
+// Generates a password and emails it to a newly created account.
+router.post('/:id/send-password', authorizeRoles('facility_admin', 'super_admin'), sendPassword);
+
 router
   .route('/')
   .get(authorizeRoles('facility_admin', 'super_admin'), getUsers)

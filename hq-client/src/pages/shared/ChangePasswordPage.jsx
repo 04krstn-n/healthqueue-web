@@ -7,6 +7,35 @@ import styles from '../auth/LoginPage.module.css'
 // the same auth flow family (forced first-login change after
 // userController.createUser hands out a temp password), so it should look
 // like it belongs with the login screen, not like a separate app section.
+const EyeOn  = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+const EyeOff = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+
+// Password input with its own show/hide (eye) button.
+function PasswordInput({ value, onChange, placeholder, autoComplete }) {
+  const [show, setShow] = useState(false)
+  return (
+    <div className={styles.inputWrap}>
+      <input
+        type={show ? 'text' : 'password'}
+        className={styles.input}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        autoComplete={autoComplete}
+      />
+      <button
+        type="button"
+        className={styles.eyeBtn}
+        onClick={() => setShow((v) => !v)}
+        aria-label={show ? 'Hide password' : 'Show password'}
+        aria-pressed={show}
+      >
+        {show ? <EyeOff /> : <EyeOn />}
+      </button>
+    </div>
+  )
+}
+
 export default function ChangePasswordPage() {
   const { clearMustChangePassword } = useAuth()
   const [currentPassword, setCurrentPassword] = useState('')
@@ -71,44 +100,32 @@ export default function ChangePasswordPage() {
         <form onSubmit={handleSubmit} className={styles.form}>
           <div className={styles.formGroup}>
             <label className={styles.label}>Temporary Password</label>
-            <div className={styles.inputWrap}>
-              <input
-                type="password"
-                className={styles.input}
-                placeholder="The password you were given"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-              />
-            </div>
+            <PasswordInput
+              placeholder="The password you were given"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+            />
           </div>
 
           <div className={styles.formGroup}>
             <label className={styles.label}>New Password</label>
-            <div className={styles.inputWrap}>
-              <input
-                type="password"
-                className={styles.input}
-                placeholder="••••••••"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-            </div>
+            <PasswordInput
+              placeholder="••••••••"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+            />
           </div>
 
           <div className={styles.formGroup}>
             <label className={styles.label}>Confirm New Password</label>
-            <div className={styles.inputWrap}>
-              <input
-                type="password"
-                className={styles.input}
-                placeholder="••••••••"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-            </div>
+            <PasswordInput
+              placeholder="••••••••"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+            />
           </div>
 
           <div style={{ fontSize: 11.5, color: 'var(--muted)', margin: '2px 0 8px', lineHeight: 1.6 }}>

@@ -74,6 +74,8 @@ const UserSchema = new mongoose.Schema(
     // credential can't stay in use indefinitely. Cleared by
     // authController.changePassword or resetPassword.
     mustChangePassword: { type: Boolean, default: false },
+    // When an admin last emailed this account its generated password.
+    passwordSentAt: { type: Date, default: null },
     gender: { 
     type: String, 
     enum: ['Male', 'Female', 'Other', 'Prefer not to say'], 
@@ -114,6 +116,7 @@ UserSchema.methods.toSafeObject = function () {
     isVerified: this.isVerified,
     isActive:   this.isActive,
     mustChangePassword: this.mustChangePassword,
+    passwordSentAt: this.passwordSentAt,
     gender:     this.gender,
     specialization: this.specialization,
     createdAt:  this.createdAt,

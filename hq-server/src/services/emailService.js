@@ -118,13 +118,17 @@ const sendEmail = async ({ to, subject, text, html }) => {
     return { success: false, mock: true, error: 'Email is not configured on the server.' };
   }
   try {
-    await t.sendMail({
+    const info = await t.sendMail({
       from: process.env.EMAIL_FROM || process.env.SMTP_USER,
       to,
       subject,
       text,
       html,
     });
+    // The SMTP server can refuse a recipient outright (unknown domain/mailbox).
+    if (info && Array.isArray(info.rejected) && info.rejected.length > 0) {
+      return { success: false, error: `Recipient rejected: ${info.rejected.join(', ')}` };
+    }
     return { success: true };
   } catch (err) {
     console.error('Email send error:', err.message);
@@ -164,4 +168,44 @@ const sendPasswordChangedEmail = (to) =>
     ),
   });
 
-module.exports = { validateEmailAddress, sendEmail, sendOTPEmail, sendPasswordChangedEmail, EMAIL_REGEX };
+const escapeHtml = (v) =>
+  String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const ROLE_LABEL = { facility_admin: 'Facility Administrator', staff: 'Healthcare Staff', super_admin: 'System Administrator' };
+
+/**
+ * Tells a newly created admin/staff member their account exists and the
+ * initial password the creating admin chose for them. The creating admin
+ * typed that password, so the account is flagged mustChangePassword and the
+ * email says to change it at first login. The password is never logged.
+ */
+const sendAccountCreatedEmail = (to, { fullName, role, password, createdBy }) => {
+  const roleLabel = ROLE_LABEL[role] || 'user';
+  const where = role === 'staff'
+    ? 'Open the HealthQueue+ staff app on your tablet and log in with your email and this password.'
+    : `Log in to the HealthQueue+ web portal${process.env.APP_LOGIN_URL ? ` at ${process.env.APP_LOGIN_URL}` : ''} with your email and this password.`;
+  return sendEmail({
+    to,
+    subject: 'Your HealthQueue+ account has been created',
+    text:
+      `Hello ${fullName},\n\n` +
+      `${createdBy ? createdBy + ' created' : 'An administrator created'} a HealthQueue+ ${roleLabel} account for you.\n\n` +
+      `Email: ${to}\nTemporary password: ${password}\n\n` +
+      `${where}\nYou will be asked to choose a new password the first time you log in. Do not share this password.`,
+    html: shell(
+      'Your account is ready',
+      `<p style="color:#374151">Hello ${escapeHtml(fullName)},</p>
+       <p style="color:#374151">${escapeHtml(createdBy || 'An administrator')} created a HealthQueue+ <strong>${escapeHtml(roleLabel)}</strong> account for you.</p>
+       <div style="background:#f3f4f6;border-radius:8px;padding:12px 16px;margin:16px 0">
+         <div style="font-size:12px;color:#6b7280">Email</div>
+         <div style="font-weight:bold;color:#111827">${escapeHtml(to)}</div>
+         <div style="font-size:12px;color:#6b7280;margin-top:8px">Temporary password</div>
+         <div style="font-size:18px;font-weight:bold;letter-spacing:1px;color:#0f766e">${escapeHtml(password)}</div>
+       </div>
+       <p style="color:#374151">${escapeHtml(where)}</p>
+       <p style="color:#374151">You will be asked to choose a new password the first time you log in. Never share this password.</p>`
+    ),
+  });
+};
+
+module.exports = { validateEmailAddress, sendEmail, sendOTPEmail, sendPasswordChangedEmail, sendAccountCreatedEmail, EMAIL_REGEX };
