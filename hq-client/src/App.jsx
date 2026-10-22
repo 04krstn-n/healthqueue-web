@@ -8,7 +8,7 @@ import AppErrorBoundary from './components/shared/AppErrorBoundary'
 import LandingPage from './public/LandingPage'
 
 // Public waiting-room display (no login) — lazy so it stays out of the admin bundle
-const QueueBoardPage = lazy(() => import('./pages/public/QueueBoardPage'))
+const QueueBoardPage = lazy(() => import('./public/QueueBoardPage'))
 
 // Auth
 import LoginPage from './pages/auth/LoginPage'
