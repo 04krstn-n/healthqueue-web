@@ -181,11 +181,6 @@ export default function QueueBoardPage() {
           )}
         </section>
       </div>
-
-      <footer className={styles.footer}>
-        <span>{board.waitingCount} waiting</span>
-        <span>Find your ticket number on your slip. Updated {new Date(board.updatedAt).toLocaleTimeString()}</span>
-      </footer>
     </main>
   )
 }
