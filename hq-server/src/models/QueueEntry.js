@@ -33,9 +33,6 @@ const QueueEntrySchema = new mongoose.Schema(
     queueNumber: { type: String, required: true },
     serviceName: { type: String, required: true },
     serviceId:   { type: mongoose.Schema.Types.ObjectId, default: null },
-    // Shared by all entries created from ONE multi-service request (one entry
-    // and one line per service). See utils/visitHold.js for the hold rules.
-    visitId: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
     // Every service the patient selected (serviceName/serviceId above hold the
     // joined label and the first one, so older screens keep working).
     services: [{
@@ -66,13 +63,6 @@ const QueueEntrySchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    // Set when the grace-period sweeper (services/graceSweeper.js) marked this
-    // entry no_show automatically, rather than a staff member.
-    autoExpiredAt: { type: Date, default: null },
-    // The patient tapped "I'm on my way" after being called: the 5-minute grace
-    // period is extended ONCE by 3 minutes (see queueController.markOnTheWay).
-    onTheWayAt: { type: Date, default: null },
-    graceExtended: { type: Boolean, default: false },
     gracePeriodExpiresAt: {
       type: Date, // Set to Date.now() + 5 minutes when patient is called
       default: null,

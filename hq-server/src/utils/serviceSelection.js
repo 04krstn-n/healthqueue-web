@@ -11,6 +11,7 @@
  * Returns { ok:true, services:[{serviceId,name}], serviceName:"A, B", serviceId }
  *      or { ok:false, message }.
  */
+const MAX_SERVICES = 5;
 
 const nameOf = (s) => (s && (s.name || s.serviceName)) || '';
 const idOf = (s) => (s && (s._id || s.id)) || null;
@@ -48,7 +49,7 @@ const resolveServices = (clinic, body = {}) => {
   }
 
   if (picked.length === 0) return { ok: false, message: 'Please select at least one service.' };
-  // No arbitrary cap: each service is its own line, limited only by what the clinic offers.
+  if (picked.length > MAX_SERVICES) return { ok: false, message: `You can select up to ${MAX_SERVICES} services at once.` };
 
   return {
     ok: true,
@@ -58,4 +59,4 @@ const resolveServices = (clinic, body = {}) => {
   };
 };
 
-module.exports = { resolveServices };
+module.exports = { resolveServices, MAX_SERVICES };

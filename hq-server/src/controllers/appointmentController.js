@@ -1,7 +1,6 @@
 /**
  * Appointment Controller — Booking, scheduling, and slot management
  */
-const mongoose = require('mongoose');
 const { resolveServices } = require('../utils/serviceSelection');
 const { slotInstant, slotWithinHours } = require('../utils/clinicHours');
 const Appointment = require('../models/Appointment');
@@ -59,49 +58,35 @@ const checkInAppointmentToQueue = async (appointment, req) => {
   const effectiveJoinedAt = computeEffectiveJoinedAt(appointment.appointmentDate, now);
 
   const prefix = (clinic.name.charAt(0) || 'Q').toUpperCase();
-  // One entry (and one line) per booked service, linked by a shared visitId so
-  // the "first call wins" hold rules in utils/visitHold.js apply. A single-
-  // service appointment produces exactly one entry, as before.
-  const svcList = Array.isArray(appointment.services) && appointment.services.length > 0
-    ? appointment.services
-    : [{ serviceId: appointment.serviceId || null, name: appointment.serviceName }];
-  const visitId = new mongoose.Types.ObjectId();
-  const isPriority = Boolean(appointment.patientType && appointment.patientType !== 'Regular');
-  const entries = [];
-  // One ticket number for the whole visit, shared by every service line.
   const queueNumber = await getNextQueueNumber(appointment.clinic, prefix);
-  for (const svc of svcList) {
-    const estWait = await estimateWaitTime(appointment.clinic, svc.serviceId || null);
-    entries.push(await QueueEntry.create({
-      clinic: appointment.clinic,
-      patient: appointment.patient,
-      patientName: appointment.patientName,
-      patientPhone: appointment.patientPhone,
-      patientType: appointment.patientType || 'Regular',
-      serviceName: svc.name,
-      serviceId: svc.serviceId || null,
-      services: [{ serviceId: svc.serviceId || null, name: svc.name }],
-      visitId,
-      queueNumber,
-      queueType: isPriority ? 'Priority' : 'Regular',
-      priority: isPriority,
-      joinedRemotely: false,
-      estimatedWaitMinutes: estWait,
-      joinedAt: effectiveJoinedAt,
-    }));
-  }
-  const entry = entries[0];
+  const estWait = await estimateWaitTime(appointment.clinic, appointment.serviceId);
+
+  const entry = await QueueEntry.create({
+    clinic: appointment.clinic,
+    patient: appointment.patient,
+    patientName: appointment.patientName,
+    patientPhone: appointment.patientPhone,
+    patientType: appointment.patientType || 'Regular',
+    serviceName: appointment.serviceName,
+    serviceId: appointment.serviceId || null,
+    queueNumber,
+    queueType: appointment.patientType && appointment.patientType !== 'Regular' ? 'Priority' : 'Regular',
+    priority: Boolean(appointment.patientType && appointment.patientType !== 'Regular'),
+    joinedRemotely: false,
+    estimatedWaitMinutes: estWait,
+    joinedAt: effectiveJoinedAt,
+  });
 
   appointment.status = 'arrived';
   appointment.arrivedAt = now;
   appointment.queueEntry = entry._id;
   await appointment.save();
 
-  await Clinic.findByIdAndUpdate(appointment.clinic, { $inc: { queueLength: entries.length } });
+  await Clinic.findByIdAndUpdate(appointment.clinic, { $inc: { queueLength: 1 } });
 
   const io = req?.app?.get('io');
   if (io) {
-    for (const e of entries) io.to(`clinic_${appointment.clinic}`).emit('queue_entry_added', { entry: e, fromAppointment: true });
+    io.to(`clinic_${appointment.clinic}`).emit('queue_entry_added', { entry, fromAppointment: true });
   }
 
   return entry;
