@@ -3,6 +3,7 @@
  * Access: facility_admin (own clinic), super_admin (all)
  */
 const mongoose = require('mongoose');
+const { checkOptionalPhone } = require('../utils/validators');
 const { validateEmailAddress } = require('../services/emailService');
 const { generatePassword } = require('../utils/generatePassword');
 const Staff = require('../models/Staff');
@@ -85,6 +86,12 @@ const createStaff = async (req, res) => {
       return res.status(400).json({ message: 'Name and email are required.' });
     }
 
+    const phoneCheck = checkOptionalPhone(phone);
+    if (!phoneCheck.ok) {
+      if (session) await session.abortTransaction();
+      return res.status(400).json({ message: phoneCheck.message });
+    }
+
     const targetClinic = clinicId || req.user.clinicId;
     if (!targetClinic) {
       if (session) await session.abortTransaction();
@@ -124,7 +131,7 @@ const createStaff = async (req, res) => {
         {
           fullName: fullName.trim(),
           email: normalizedEmail,
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
+          phone: phoneCheck.value || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
           // Random and never shown/emailed; the real one is generated and
           // emailed when the admin clicks "Send password".
           password: generatePassword(16),
@@ -146,7 +153,7 @@ const createStaff = async (req, res) => {
           clinic: targetClinic,
           fullName: fullName.trim(),
           email: normalizedEmail,
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
+          phone: phoneCheck.value || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
           role: role || 'admin',
           specialization: specialization || '',
           licenseNumber: licenseNumber || '',
@@ -193,6 +200,11 @@ const updateStaff = async (req, res) => {
     }
 
     const allowed = ['position', 'specialization', 'licenseNumber', 'schedule', 'isActive', 'phone', 'role', 'fullName', 'email', 'gender'];
+    if (req.body.phone !== undefined) {
+      const phoneCheck = checkOptionalPhone(req.body.phone);
+      if (!phoneCheck.ok) return res.status(400).json({ message: phoneCheck.message });
+      req.body.phone = phoneCheck.value;
+    }
     allowed.forEach((f) => {
       if (req.body[f] !== undefined) member[f] = req.body[f];
     });

@@ -28,7 +28,11 @@ const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
  * Atomic $inc via Counter — see Counter.js header for why this matters.
  */
 const getNextQueueNumber = async (clinicId, prefix = 'Q') => {
-  const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC) — resets the counter daily
+  // YYYY-MM-DD in Philippine time — the counter resets at midnight Manila
+  // time (toISOString() is UTC, which reset numbering at 8:00 AM mid-clinic).
+  const dateKey = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
   const counterId = `${clinicId}_${dateKey}_${prefix}`;
 
   const counter = await Counter.findOneAndUpdate(

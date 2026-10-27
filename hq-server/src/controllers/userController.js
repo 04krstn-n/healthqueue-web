@@ -10,6 +10,7 @@ const Patient = require('../models/Patient');
 const Staff = require('../models/Staff');
 const { logAction } = require('../utils/auditLog');
 const { validatePasswordStrength, normalizePhone } = require('./authController');
+const { checkOptionalPhone } = require('../utils/validators');
 
 // Accounts an admin creates (super_admin -> facility_admin, facility_admin ->
 // staff) are created WITHOUT a usable password. The admin then clicks "Send
@@ -65,7 +66,9 @@ const createUser = async (req, res) => {
 
   // Phone is optional: admin/staff reset their password by EMAIL, so a phone
   // number is no longer needed for recovery.
-  const normalizedPhone = phone && phone.trim() ? normalizePhone(phone) : undefined;
+  const phoneCheck = checkOptionalPhone(phone);
+  if (!phoneCheck.ok) return res.status(400).json({ message: phoneCheck.message });
+  const normalizedPhone = phoneCheck.value || undefined;
 
   const targetClinic = req.user.role === 'facility_admin' ? req.user.clinicId : (clinicId || null);
 
@@ -271,7 +274,12 @@ const updateUser = async (req, res) => {
     const wasActive = user.isActive;
 
     if (fullName) user.fullName = fullName;
-    if (phone !== undefined) user.phone = phone;
+    if (phone !== undefined) {
+      const phoneCheck = checkOptionalPhone(phone);
+      if (!phoneCheck.ok) return res.status(400).json({ message: phoneCheck.message });
+      // undefined (not '') so a cleared phone doesn't collide on the sparse unique index
+      user.phone = phoneCheck.value || undefined;
+    }
     if (clinicId !== undefined && req.user.role === 'super_admin') user.clinicId = clinicId;
     if (isActive !== undefined) user.isActive = isActive;
     if (gender !== undefined) user.gender = gender;
@@ -396,6 +404,20 @@ const updateMyPatientProfile = async (req, res) => {
     // still allows 'Other'/'' so existing records aren't broken by this.
     if (update.gender !== undefined && !['Male', 'Female'].includes(update.gender)) {
       return res.status(400).json({ message: 'Gender must be Male or Female.' });
+    }
+    if (update.phone !== undefined) {
+      const phoneCheck = checkOptionalPhone(update.phone);
+      if (!phoneCheck.ok) return res.status(400).json({ message: phoneCheck.message });
+      update.phone = phoneCheck.value;
+    }
+    if (update.fullName !== undefined && (typeof update.fullName !== 'string' || update.fullName.trim().length < 2)) {
+      return res.status(400).json({ message: 'Full name must be at least 2 characters.' });
+    }
+    if (update.dateOfBirth) {
+      const dob = new Date(update.dateOfBirth);
+      if (Number.isNaN(dob.getTime()) || dob > new Date()) {
+        return res.status(400).json({ message: 'Enter a valid date of birth.' });
+      }
     }
 
     const profile = await Patient.findOneAndUpdate(

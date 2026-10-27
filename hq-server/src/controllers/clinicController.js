@@ -2,6 +2,7 @@
  * Clinic Controller — Clinic profile management & Proximity Recommendation Engine
  */
 const Clinic = require('../models/Clinic');
+const { escapeRegex } = require('../utils/validators');
 const InsightsLog = require('../models/InsightsLog');
 const { calculateDistance } = require('../utils/calculateDistance');
 const { generatePrescriptiveInsight } = require('../services/openaiService');
@@ -187,12 +188,25 @@ const deleteClinic = async (req, res) => {
 const getRecommendations = async (req, res) => {
   try {
     const { latitude, longitude, service } = req.query;
-    const userLat = parseFloat(latitude) || 14.5995; // Default Metro Manila lat
-    const userLng = parseFloat(longitude) || 120.9842; // Default Metro Manila lng
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+    const hasLocation = Number.isFinite(lat) && Number.isFinite(lng)
+      && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+    // Without a usable GPS fix, distances are measured from central Metro
+    // Manila; the response says so (locationSource) so the app can tell the
+    // patient the "nearest" result is approximate.
+    const userLat = hasLocation ? lat : 14.5995;
+    const userLng = hasLocation ? lng : 120.9842;
 
     const filter = { isActive: true, status: { $ne: 'closed' } };
-    if (service) {
-      filter['services.name'] = { $regex: new RegExp(service, 'i') };
+    if (service !== undefined) {
+      if (typeof service !== 'string' || service.length > 100) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Invalid service filter.' });
+      }
+      if (service.trim()) {
+        // Escaped: the text is matched literally, never run as a pattern.
+        filter['services.name'] = { $regex: new RegExp(escapeRegex(service.trim()), 'i') };
+      }
     }
 
     const clinics = await Clinic.find(filter).lean();
@@ -203,13 +217,19 @@ const getRecommendations = async (req, res) => {
       return {
         ...c,
         distanceKm,
-        avgWaitMinutes: c.currentWaitingTime || 15,
+        // `?? 15` (not `|| 15`): a clinic with a real 0-minute wait must stay
+        // 0 and rank as fastest; 15 is only a default when no value exists.
+        avgWaitMinutes: c.currentWaitingTime ?? 15,
       };
     });
 
     // Sort options: 1. Lowest Wait Time 2. Proximity
     const sortedBySpeed = [...evaluated].sort((a, b) => a.avgWaitMinutes - b.avgWaitMinutes);
-    const sortedByDistance = [...evaluated].sort((a, b) => a.distanceKm - b.distanceKm);
+    // A clinic without saved coordinates can't be "nearest" (its distance
+    // would be measured to 0,0), so it is left out of the distance ranking.
+    const sortedByDistance = evaluated
+      .filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude) && (c.latitude !== 0 || c.longitude !== 0))
+      .sort((a, b) => a.distanceKm - b.distanceKm);
 
     const nearestClinic = sortedByDistance[0] || null;
     const fastestClinic = sortedBySpeed[0] || null;
@@ -222,7 +242,11 @@ const getRecommendations = async (req, res) => {
         sortedBySpeed.slice(0, 3)
       );
     } catch (e) {
-      aiExplanation = `We recommend ${fastestClinic?.name} due to its low estimated wait time (${fastestClinic?.avgWaitMinutes} mins)[cite: 1].`;
+      aiExplanation = null;
+    }
+    // Rule-based fallback when OpenAI is unavailable (no key -> null) or fails.
+    if (!aiExplanation && fastestClinic) {
+      aiExplanation = `We recommend ${fastestClinic.name} because it has the lowest estimated wait time right now (${fastestClinic.avgWaitMinutes} mins).`;
     }
 
     // Save evaluation log for ISO/IEC 25010 tracking
@@ -245,6 +269,7 @@ const getRecommendations = async (req, res) => {
     return res.status(HttpStatus.OK).json({
       success: true,
       recommendation: aiExplanation,
+      locationSource: hasLocation ? 'device' : 'default_metro_manila',
       nearestClinic,
       fastestClinic,
       clinics: sortedBySpeed,

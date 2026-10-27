@@ -14,6 +14,7 @@ const { HttpStatus, PORT, NODE_ENV, FRONTEND_ORIGINS } = require('./config/confi
 const connectDB = require('./config/db');
 const { registerSocketSecurity } = require('./socket/socketSecurity');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
+const { sanitizeRequest } = require('./middleware/sanitize');
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 const authRoutes         = require('./routes/authRoutes');
@@ -39,6 +40,11 @@ const auditLogRoutes     = require('./routes/auditLogRoutes');
 connectDB();
 
 const app = express();
+
+// "simple" = Node's querystring parser: ?a[$gt]=1 stays a plain string key
+// instead of becoming { a: { $gt: 1 } }, so query strings can never carry
+// MongoDB operators (see middleware/sanitize.js for the body side).
+app.set('query parser', 'simple');
 
 // Heroku (and most hosts) put a reverse proxy in front of the app. Without
 // this, req.ip is the PROXY's address for every visitor, so all the rate
@@ -82,10 +88,21 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: false }));
+// Strip MongoDB operator keys ($gt, $ne, ...) from every JSON body.
+app.use(sanitizeRequest);
+
+// Load testing (scripts/loadtest) sends hundreds of requests from ONE
+// machine, which the per-IP limiters below would block. DISABLE_RATE_LIMIT
+// turns them off, but ONLY outside production — it is ignored when
+// NODE_ENV=production.
+const rateLimitOff = process.env.DISABLE_RATE_LIMIT === 'true' && NODE_ENV !== 'production';
+if (rateLimitOff) console.warn('[WARN] Rate limiting DISABLED for load testing (DISABLE_RATE_LIMIT=true).');
+const skipLimits = () => rateLimitOff;
 
 // Rate limiting — 200 requests per 15 min per IP
 const limiter = rateLimit({
+  skip: skipLimits,
   windowMs: 15 * 60 * 1000,
   max: 200,
   standardHeaders: true,
@@ -101,6 +118,7 @@ const limiter = rateLimit({
 // otherwise burn through the 200-requests-per-15-minutes budget and lock
 // staff out of the real API.
 const publicLimiter = rateLimit({
+  skip: skipLimits,
   windowMs: 60 * 1000,
   max: 60,
   standardHeaders: true,
@@ -116,6 +134,7 @@ app.use('/api', limiter);
 // it's shared across every route. This applies on top of it, scoped only to
 // login/OTP/password-reset.
 const authLimiter = rateLimit({
+  skip: skipLimits,
   windowMs: 15 * 60 * 1000,
   max: 10,
   standardHeaders: true,
@@ -171,6 +190,10 @@ app.use(errorHandler);
 const { startGraceSweeper } = require('./services/graceSweeper');
 const { notifyPositionMilestones } = require('./controllers/queueController');
 startGraceSweeper({ io, onChange: (clinicId) => notifyPositionMilestones(clinicId).catch(() => {}) });
+
+// ─── Appointment reminders (24 h and 1 h before the slot) ─────────────────────
+const { startAppointmentReminders } = require('./services/appointmentReminder');
+startAppointmentReminders();
 
 // ─── Start Server ─────────────────────────────────────────────────────────────
 server.listen(PORT, () => {

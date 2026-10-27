@@ -1,6 +1,7 @@
 /**
  * JWT Token Utilities
  */
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { JWT_SECRET, JWT_EXPIRES_IN } = require('../config/config');
 
@@ -20,7 +21,9 @@ const signToken = (user) => {
       clinicId: user.clinicId || null 
     },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN || '1d' }
+    // jwtid gives every login its own id, so logout can revoke exactly this
+    // token (see models/RevokedToken.js) without ending other devices.
+    { expiresIn: JWT_EXPIRES_IN || '1d', jwtid: crypto.randomUUID() }
   );
 };
 

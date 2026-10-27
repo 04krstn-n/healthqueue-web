@@ -106,14 +106,14 @@ async function openAiResponse(message, faqs) {
 Your role:
 - Assist patients with clinic services, queueing rules, and consultation inquiries.
 - Be concise and warm (1-3 sentences max).
-- Direct medical diagnostic questions to human medical professionals[cite: 1].
+- Direct medical diagnostic questions to human medical professionals.
 
 FAQ Knowledge Base:
 ---
 ${faqContext}
 ---
 
-If the user seems frustrated or requires staff intervention, append "[ESCALATE]" at the end of your response[cite: 1].`;
+If the user seems frustrated or requires staff intervention, append "[ESCALATE]" at the end of your response.`;
 
   const completion = await openaiClient.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -214,7 +214,7 @@ const handleMessage = async (req, res) => {
 
     // Default Fallback
     if (!reply) {
-      reply = "I'm sorry, I couldn't find an answer to that. Please speak with reception or request staff assistance[cite: 1].";
+      reply = "I'm sorry, I couldn't find an answer to that. Please speak with reception or request staff assistance.";
       autoEscalate = true;
     }
 

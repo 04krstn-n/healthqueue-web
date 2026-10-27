@@ -20,6 +20,7 @@
  */
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { isRevoked } = require('../middleware/auth');
 const { JWT_SECRET } = require('../config/config');
 
 const STAFF_ROLES = ['staff', 'facility_admin'];
@@ -39,6 +40,7 @@ const registerSocketSecurity = (io) => {
       const token = extractToken(socket);
       if (token && JWT_SECRET) {
         const decoded = jwt.verify(token, JWT_SECRET);
+        if (await isRevoked(decoded)) throw new Error('revoked'); // logged-out token -> anonymous
         const user = await User.findById(decoded.id || decoded._id).select('role clinicId isActive');
         if (user && user.isActive) socket.user = user;
       }

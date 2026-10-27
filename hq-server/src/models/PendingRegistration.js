@@ -6,14 +6,11 @@
  * of registration), which meant an abandoned or never-verified signup still
  * left a real account sitting in the database.
  *
- * The password is stored in plain text here, not pre-hashed — this is
- * intentional, not an oversight: User's pre-save hook hashes `password`
- * whenever it's a modified field, which is unconditionally true for a
- * brand-new document. Pre-hashing here and passing the hash through to
- * User.create() would hash it a second time, silently breaking login. This
- * document is short-lived (deleted immediately on successful verification,
- * and TTL-expired otherwise — see the index below), the same tradeoff any
- * "pending signup" flow with a deferred password hash makes.
+ * The password is stored as a bcrypt hash (authController.register hashes it
+ * before saving). When the account is created, verifyOTP sets
+ * user.$locals.passwordAlreadyHashed so User's pre-save hook does not hash it
+ * a second time. The record is deleted on successful verification and
+ * TTL-expired otherwise (see the index below).
  */
 const mongoose = require('mongoose');
 

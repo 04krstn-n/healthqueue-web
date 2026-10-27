@@ -1,0 +1,128 @@
+HealthQueue+ server automated test results — 2026-10-27 00:14 (Asia/Manila)
+Command: node --test --test-reporter=spec tests/*.test.js
+Result: 64 tests, 64 passed, 0 failed
+
+✔ 5 wrong passwords lock the account for 15 minutes; correct password is refused while locked (32.235767ms)
+✔ lock expires by itself, and a successful login resets the counter (9.3438ms)
+✔ deactivated and unverified accounts cannot log in (7.725387ms)
+✔ forgot-password gives the same answer for registered and unknown numbers (no account discovery) (4.55821ms)
+✔ forgot-password rejects an invalid phone format (3.301242ms)
+✔ password policy is enforced on the server (3.882032ms)
+✔ regression: actual wait is read from waitTimeInMinutes (the field the model really stores) (3.13613ms)
+✔ MAE, bias and within-N% are computed correctly (0.458006ms)
+✔ historical-average baseline never uses the ticket it predicts (0.316892ms)
+✔ patient cancels own waiting ticket -> cancelled, live counter decremented once (2.899625ms)
+✔ double-tap cancel (two requests at once) -> counter drops only once (1.56889ms)
+✔ cancelling someone else's ticket, or a finished ticket, is refused (0.468042ms)
+✔ no-show: only a CALLED ticket can be marked; manual and automatic no-show cannot both apply (1.369916ms)
+✔ duplicate registration: a phone already in use is refused (any format of the same number) (1.958022ms)
+✔ duplicate registration: an email already in use is refused (0.544518ms)
+✔ registration input validation (invalid / incomplete data) (0.549504ms)
+✔ valid registration stores a HASHED password in the pending record (never plain text) (125.064406ms)
+✔ S1 staff calls a remote patient -> status "called", 5-minute grace starts, patient notified (3.002547ms)
+✔ S2 patient arrives within 5 minutes -> service starts, sweeper leaves the ticket alone (1.249494ms)
+✔ S3 patient does NOT arrive within 5 minutes -> automatic no-show, counter freed, patient told (1.700355ms)
+✔ S4 staff starts service at the same moment the grace expires -> only one wins (0.465384ms)
+✔ S5 late patient asks staff -> no-show ticket is requeued, grace period cleared (1.119258ms)
+✔ S6 patient taps "On my way" -> staff room notified; only the ticket owner, only while called (0.718137ms)
+✔ S7 two staff press "Call" at the same time -> one succeeds, the other gets 409 (0.702034ms)
+✔ S8 calling an already-called / serving ticket is refused (grace cannot be reset) (0.337775ms)
+✔ S9 staff of another clinic cannot call, start, or requeue this clinic's tickets (0.57191ms)
+✔ S10 several tickets expire in one sweep -> each processed exactly once (1.441996ms)
+✔ push delivered -> no SMS is sent (2.147215ms)
+✔ push FAILS for a time-critical alert -> falls back to SMS and logs both attempts (1.585429ms)
+✔ patient has no registered device -> SMS fallback for "no_show" (0.436468ms)
+✔ routine position update (#5) with failed push -> NOT texted (saves SMS credits), in-app only (0.498876ms)
+✔ push AND SMS both fail -> failure is reported and logged, request does not crash (0.771239ms)
+✔ DELAYED push (slow provider) still resolves and is recorded (302.215091ms)
+✔ push throws an exception -> caught, never breaks the queue action (0.82502ms)
+✔ walk-in with phone -> SMS; walk-in without phone -> channel "none" (0.285095ms)
+✔ SMS not configured (mock) counts as NOT delivered (0.268505ms)
+✔ upload: real image bytes are required (renamed non-image is rejected) (1.234079ms)
+✔ upload: photo is stored ENCRYPTED in the database (1.593001ms)
+✔ photo access: owner, same-clinic staff and super admin allowed; other clinics refused (1.632568ms)
+✔ approve/reject: staff of a clinic the patient never visited is refused (0.382898ms)
+✔ tampered ciphertext cannot be decrypted (integrity check) (0.71551ms)
+✔ dueReminder picks the right reminder for each lead time (1.350226ms)
+✔ sweep sends a day reminder, then an hour reminder, never duplicates (24.141478ms)
+✔ 1-hour reminder falls back to SMS when the push fails (2.322255ms)
+✔ AUTHN: protected endpoints refuse requests with no token (401) (70.24993ms)
+✔ AUTHN: tampered, wrong-secret, expired, revoked and garbage tokens are rejected (401) (16.647065ms)
+✔ AUTHN: a deactivated account is refused even with a valid token (403) (2.907219ms)
+✔ RBAC: role comes from the database, not from the token claims (4.763014ms)
+✔ RBAC: a PATIENT cannot reach staff/admin endpoints (403) (42.974391ms)
+✔ RBAC: STAFF cannot reach admin-only endpoints (403) (28.068392ms)
+✔ RBAC: FACILITY ADMIN cannot reach super-admin-only endpoints (403) (9.09758ms)
+✔ API: invalid IDs and malformed input are rejected before reaching the database (9.502546ms)
+✔ API: security headers are set (helmet) and unknown origins get no CORS grant (3.836568ms)
+✔ API: login endpoint is rate-limited per IP (brute-force protection) (16.160426ms)
+✔ anonymous socket cannot join any room (1.466524ms)
+✔ patient gets only the sanitized public clinic room and their own user room (3.518198ms)
+✔ staff join only their own clinic room; super admin any (1.137875ms)
+✔ revoked, forged or deactivated-account tokens are treated as anonymous (1.253625ms)
+✔ normalizes every accepted PH mobile format to 09XXXXXXXXX (1.020283ms)
+✔ rejects invalid mobile numbers (invalid input cases) (0.915718ms)
+✔ isObjectId accepts only 24-hex ids (0.312225ms)
+✔ escapeRegex makes user text match literally (0.328988ms)
+
+HTTP request log recorded during tests/security.test.js (method, path, status returned):
+GET /api/users 401
+GET /api/queues 401
+GET /api/patients 401
+POST /api/queues/join 401
+GET /api/analytics/effectiveness 401
+GET /api/patient-type-requests/bbbbbbbbbbbbbbbbbbbbbbbb/photo 401
+GET /api/auth/me 401
+GET /api/auth/me 401
+GET /api/auth/me 401
+GET /api/auth/me 401
+GET /api/auth/me 401
+GET /api/auth/me 401
+GET /api/auth/me 403
+GET /api/system-config 403
+GET /api/users 403
+GET /api/users 403
+POST /api/users 403
+GET /api/patients 403
+GET /api/patients/bbbbbbbbbbbbbbbbbbbbbbbb 403
+GET /api/queues 403
+PUT /api/queues/bbbbbbbbbbbbbbbbbbbbbbbb/call 403
+PUT /api/queues/bbbbbbbbbbbbbbbbbbbbbbbb/no-show 403
+POST /api/queues/add-walkin 403
+GET /api/system-config 403
+GET /api/audit-logs 403
+GET /api/analytics/effectiveness 403
+GET /api/patient-type-requests 403
+PUT /api/patient-type-requests/bbbbbbbbbbbbbbbbbbbbbbbb/approve 403
+GET /api/staff 403
+GET /api/dashboard/super-admin 403
+POST /api/clinics 403
+GET /api/users 403
+POST /api/users 403
+GET /api/system-config 403
+GET /api/audit-logs 403
+GET /api/analytics/effectiveness 403
+DELETE /api/patients/bbbbbbbbbbbbbbbbbbbbbbbb 403
+GET /api/staff 403
+POST /api/clinics 403
+GET /api/dashboard/super-admin 403
+POST /api/queues/join 403
+GET /api/system-config 403
+POST /api/clinics 403
+DELETE /api/clinics/bbbbbbbbbbbbbbbbbbbbbbbb 403
+GET /api/dashboard/super-admin 403
+POST /api/auth/login 401
+POST /api/auth/verify-otp 400
+POST /api/auth/register 400
+POST /api/queues/join 400
+GET /health 200
+GET /health 200
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 401
+POST /api/auth/login 429

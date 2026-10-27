@@ -2,6 +2,7 @@
  * Patient Controller — admin view of patient records
  */
 const Patient = require('../models/Patient');
+const { checkOptionalPhone } = require('../utils/validators');
 const User = require('../models/User');
 const { validateEmailAddress } = require('../services/emailService');
 const QueueEntry = require('../models/QueueEntry');
@@ -88,6 +89,9 @@ const createPatient = async (req, res) => {
   try {
     const { fullName, email, phone, dateOfBirth, gender, address, patientType, philHealthNumber } = req.body;
     if (!fullName) return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Full name is required.' });
+    const phoneCheck = checkOptionalPhone(phone);
+    if (!phoneCheck.ok) return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: phoneCheck.message });
+    const cleanPhone = phoneCheck.value || '';
 
     let userId = null;
     if (email) {
@@ -102,7 +106,7 @@ const createPatient = async (req, res) => {
         const userDoc = await User.create({
           fullName: fullName.trim(),
           email: email.toLowerCase().trim(),
-          phone: phone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
+          phone: cleanPhone || undefined, // undefined (not '') so it does not collide on User.phone's sparse unique index
           // Nobody is ever given this: it's a random, unguessable value so the
           // record has a valid hash. The patient sets a real password through
           // Forgot Password (by phone) or by registering in the app.
@@ -118,7 +122,7 @@ const createPatient = async (req, res) => {
       user: userId,
       fullName: fullName.trim(),
       email: email || '',
-      phone: phone || '', // Patient.phone has no unique constraint — '' is fine here
+      phone: cleanPhone, // Patient.phone has no unique constraint — '' is fine here
       dateOfBirth: dateOfBirth || null,
       gender: gender || 'Other',
       address: address || '',
@@ -130,7 +134,7 @@ const createPatient = async (req, res) => {
     return res.status(HttpStatus.CREATED).json({ success: true, data: patient });
   } catch (err) {
     console.error('createPatient error:', err.message);
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: err.message || 'Failed to create patient.' });
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to create patient.' });
   }
 };
 
@@ -148,7 +152,13 @@ const updatePatient = async (req, res) => {
     const allowed = ['fullName', 'email', 'phone', 'dateOfBirth', 'gender', 'address', 'patientType', 'philHealthNumber', 'bloodType', 'allergies', 'medicalHistory', 'isActive'];
     const update = {};
     allowed.forEach(f => { if (req.body[f] !== undefined) update[f] = req.body[f]; });
-    const patient = await Patient.findByIdAndUpdate(req.params.id, update, { new: true });
+    if (update.phone !== undefined) {
+      const phoneCheck = checkOptionalPhone(update.phone);
+      if (!phoneCheck.ok) return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: phoneCheck.message });
+      update.phone = phoneCheck.value;
+    }
+    // runValidators: enforce the schema enums (patientType, gender) on edits too.
+    const patient = await Patient.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true });
     if (!patient) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Patient not found.' });
     return res.status(HttpStatus.OK).json({ success: true, data: patient });
   } catch (err) {
@@ -176,4 +186,8 @@ const deactivatePatient = async (req, res) => {
   }
 };
 
-module.exports = { getPatients, getPatient, createPatient, updatePatient, deactivatePatient };
+module.exports = {
+  getPatients, getPatient, createPatient, updatePatient, deactivatePatient,
+  // shared clinic-scope helpers (also used by patientTypeRequestController)
+  getClinicPatientIds, patientBelongsToClinic,
+};

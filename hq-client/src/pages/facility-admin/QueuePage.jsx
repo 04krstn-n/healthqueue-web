@@ -3,6 +3,31 @@ import { clinicsApi, queueApi, appointmentsApi } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import styles from './facility-admin.module.css'
 
+// S3 — shows the latest delivery attempt recorded in entry.notifyLog, so
+// staff (and the panel) can see whether a "you're next" / "it's your turn"
+// alert actually went out, by which channel, and why it failed if it did.
+const KIND_LABEL = { joined: 'Joined', near: 'Near turn', next: 'Next', called: 'Called', no_show: 'No-show' };
+const NotifyCell = ({ log }) => {
+  if (!Array.isArray(log) || log.length === 0) {
+    return <span style={{ fontSize: 11, color: 'var(--muted)' }}>—</span>;
+  }
+  const last = log[log.length - 1];
+  const failures = log.filter((l) => !l.success).length;
+  const time = last.at ? new Date(last.at).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '';
+  return (
+    <div style={{ fontSize: 11, lineHeight: 1.4 }} title={log.map((l) =>
+      `${l.at ? new Date(l.at).toLocaleTimeString('en-PH') : ''} ${KIND_LABEL[l.kind] || l.kind} via ${l.channel}: ${l.success ? 'sent' : `failed (${l.error || 'unknown'})`}`
+    ).join('\n')}>
+      <span className={`badge ${last.success ? 'badge-green' : 'badge-red'}`}>
+        {(last.channel || '').toUpperCase()} {last.success ? 'sent' : 'failed'}
+      </span>
+      <div style={{ color: 'var(--muted)' }}>{KIND_LABEL[last.kind] || last.kind} · {time}</div>
+      {!last.success && last.error && <div style={{ color: '#DC2626' }}>{last.error}</div>}
+      {failures > 0 && last.success && <div style={{ color: 'var(--muted)' }}>{failures} earlier failure(s)</div>}
+    </div>
+  );
+};
+
 const STATUS_BADGE = {
   waiting: 'badge-warn',
   serving: 'badge-blue',
@@ -393,6 +418,7 @@ export default function QueueAndAppointmentsPage() {
                     <th>Type</th>
                     <th>Joined</th>
                     <th>Status</th>
+                    <th>Notification</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -417,6 +443,7 @@ export default function QueueAndAppointmentsPage() {
                       <td>
                         <span className={`badge ${STATUS_BADGE[q.status] || 'badge-gray'}`}>{q.status}</span>
                       </td>
+                      <td><NotifyCell log={q.notifyLog} /></td>
                     </tr>
                   ))}
                 </tbody>

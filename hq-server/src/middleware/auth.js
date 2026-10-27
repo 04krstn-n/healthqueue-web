@@ -3,6 +3,10 @@
  */
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const RevokedToken = require('../models/RevokedToken');
+
+const isRevoked = async (decoded) =>
+  Boolean(decoded?.jti) && Boolean(await RevokedToken.exists({ jti: decoded.jti }));
 const { HttpStatus, JWT_SECRET } = require('../config/config');
 
 const protect = async (req, res, next) => {
@@ -25,6 +29,15 @@ const protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
+
+    // A token that was logged out cannot be used again, even before it expires.
+    if (await isRevoked(decoded)) {
+      return res.status(HttpStatus.UNAUTHORIZED).json({
+        success: false,
+        message: 'Session ended. Please log in again.',
+      });
+    }
+    req.tokenPayload = decoded;
     
     // Support both decoded.id and decoded._id
     const userId = decoded.id || decoded._id;
@@ -76,6 +89,7 @@ const staffOnly      = authorizeRoles('staff', 'facility_admin', 'super_admin');
 const patientOnly    = authorizeRoles('patient');
 
 module.exports = { 
+  isRevoked,
   protect, 
   authorizeRoles, 
   adminOnly, 

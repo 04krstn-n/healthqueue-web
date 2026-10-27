@@ -52,7 +52,7 @@ const getBestTimeToQueue = async (req, res) => {
       { $match: { clinic: clinicObjectId, joinedAt: { $gte: since } } },
       {
         $group: {
-          _id: { $hour: '$joinedAt' },
+          _id: { $hour: { date: '$joinedAt', timezone: 'Asia/Manila' } },
           count: { $sum: 1 },
           avgWait: { $avg: '$waitTimeInMinutes' },
         },
@@ -79,7 +79,7 @@ const getBestTimeToQueue = async (req, res) => {
     // ── Weekly pattern (last 30 days, grouped by day-of-week) ────────────────
     const weeklyAgg = await QueueEntry.aggregate([
       { $match: { clinic: clinicObjectId, joinedAt: { $gte: since } } },
-      { $group: { _id: { $dayOfWeek: '$joinedAt' }, count: { $sum: 1 } } },
+      { $group: { _id: { $dayOfWeek: { date: '$joinedAt', timezone: 'Asia/Manila' } }, count: { $sum: 1 } } },
     ]);
     // Mongo $dayOfWeek is 1=Sunday..7=Saturday; align to JS's 0=Sunday.
     const weeklyByDay = new Map(weeklyAgg.map((d) => [d._id - 1, d.count]));

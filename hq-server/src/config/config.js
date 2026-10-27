@@ -1,3 +1,10 @@
+// All clinic times are Philippine time. Heroku (and most cloud hosts) run
+// in UTC, which made "today", the daily queue-number reset, the duplicate-
+// ticket check and the hour-of-day forecast factor all switch days at 8:00 AM
+// Manila time. Setting TZ here (the first module the server loads for its
+// settings) makes every Date#setHours / getHours call use Manila time.
+process.env.TZ = process.env.APP_TIMEZONE || 'Asia/Manila';
+
 const path = require('path');
 const dotenv = require('dotenv');
 

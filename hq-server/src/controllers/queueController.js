@@ -2,6 +2,7 @@
  * Queue Controller — Live queue management, remote en-route enrollment, and 5-min grace period
  */
 const mongoose = require('mongoose');
+const { isObjectId } = require('../utils/validators');
 const { resolveServices } = require('../utils/serviceSelection');
 const { isOpenAt } = require('../utils/clinicHours');
 const QueueEntry = require('../models/QueueEntry');
@@ -20,6 +21,24 @@ const {
 const Appointment = require('../models/Appointment');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
+
+/**
+ * Clinic scoping for staff actions (S9). A staff member or facility admin
+ * may only act on tickets of THEIR clinic. Without this, a staff token from
+ * clinic A could call/complete/cancel a ticket in clinic B with a direct
+ * API call (the tablet UI only lists the staff's own clinic, but the UI is
+ * not the enforcement point). super_admin is not clinic-bound.
+ * Returns true when the request must be refused.
+ */
+const outsideStaffClinic = (req, entry) =>
+  ['staff', 'facility_admin'].includes(req.user.role) &&
+  String(entry.clinic?._id || entry.clinic) !== String(req.user.clinicId || '');
+
+const forbidOtherClinic = (res) =>
+  res.status(HttpStatus.FORBIDDEN).json({
+    success: false,
+    message: 'This queue ticket belongs to another clinic.',
+  });
 
 const todayRange = () => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
@@ -82,7 +101,9 @@ const notifyPositionMilestones = async (clinicId) => {
 
         // Only mark the milestone as sent if it really went out, so a failed
         // SMS is retried at the next queue change instead of being lost.
-        if (result.success) {
+        // For app users the in-app notification was already created, so the
+        // milestone counts as delivered (re-trying would duplicate it).
+        if (result.success || result.inAppOnly) {
           entry.lastNotifiedPosition = position;
           await entry.save();
         }
@@ -232,6 +253,12 @@ const joinQueue = async (req, res) => {
         success: false, 
         message: 'Clinic ID is required.' 
       });
+    }
+    if (!isObjectId(clinicId)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Invalid clinic ID.' });
+    }
+    if (notes !== undefined && (typeof notes !== 'string' || notes.length > 500)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Notes must be text of at most 500 characters.' });
     }
 
     // 1. Fetch clinic (services are embedded here)
@@ -466,10 +493,11 @@ const callPatient = async (req, res) => {
     // the 5-minute grace period / re-notifying the patient for a ticket
     // that's already past that stage — and the UI must not be the only
     // thing preventing it (a direct API call would otherwise still work).
-    const existing = await QueueEntry.findById(req.params.id).select('status');
+    const existing = await QueueEntry.findById(req.params.id).select('status clinic');
     if (!existing) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
+    if (outsideStaffClinic(req, existing)) return forbidOtherClinic(res);
     if (existing.status !== 'waiting') {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
@@ -479,8 +507,10 @@ const callPatient = async (req, res) => {
 
     const graceExpiry = getGracePeriodExpiry(5); // 5-minute arrival grace window
 
-    const entry = await QueueEntry.findByIdAndUpdate(
-      req.params.id,
+    // Atomic: the status filter means two staff tapping "Call" at the same
+    // moment cannot both succeed (only one update matches status 'waiting').
+    const entry = await QueueEntry.findOneAndUpdate(
+      { _id: req.params.id, status: 'waiting' },
       { 
         status: 'called', 
         calledAt: new Date(),
@@ -490,9 +520,9 @@ const callPatient = async (req, res) => {
     );
 
     if (!entry) {
-      return res.status(HttpStatus.NOT_FOUND).json({ 
+      return res.status(409).json({ 
         success: false, 
-        message: 'Queue entry not found.' 
+        message: 'This patient was already called by another staff member.' 
       });
     }
 
@@ -552,10 +582,11 @@ const startService = async (req, res) => {
     // there's no path back into `called` from `serving` at all — and this
     // guard ensures start-service can't be used to jump straight from
     // `waiting` (skipping the call/grace-period step) either.
-    const existing = await QueueEntry.findById(req.params.id).select('status');
+    const existing = await QueueEntry.findById(req.params.id).select('status clinic');
     if (!existing) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
+    if (outsideStaffClinic(req, existing)) return forbidOtherClinic(res);
     if (existing.status !== 'called') {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
@@ -563,8 +594,10 @@ const startService = async (req, res) => {
       });
     }
 
-    const entry = await QueueEntry.findByIdAndUpdate(
-      req.params.id,
+    // Atomic on status: if the grace sweeper marks the ticket no-show at the
+    // same instant, only one of the two updates can win.
+    const entry = await QueueEntry.findOneAndUpdate(
+      { _id: req.params.id, status: 'called' },
       { 
         status: 'serving', 
         servedAt: new Date() 
@@ -573,7 +606,7 @@ const startService = async (req, res) => {
     );
 
     if (!entry) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
+      return res.status(409).json({ success: false, message: 'This ticket changed status before service could start. Please refresh.' });
     }
 
     emitQueueUpdate(req, entry.clinic, 'service_started', { entryId: entry._id });
@@ -592,6 +625,8 @@ const completePatient = async (req, res) => {
     if (!entry) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
+
+    if (outsideStaffClinic(req, entry)) return forbidOtherClinic(res);
 
     // Serving -> Completed is the only valid path — matches the existing
     // workflow (a session can't be "completed" before it started).
@@ -638,13 +673,22 @@ const completePatient = async (req, res) => {
 // PUT /api/queues/:id/skip — Skips patient (e.g. grace period expired)
 const skipPatient = async (req, res) => {
   try {
-    const entry = await QueueEntry.findByIdAndUpdate(
-      req.params.id, 
+    const existing = await QueueEntry.findById(req.params.id).select('status clinic');
+    if (!existing) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
+    }
+    if (outsideStaffClinic(req, existing)) return forbidOtherClinic(res);
+
+    // Only an active (waiting/called) ticket can be skipped. Before this, a
+    // completed/cancelled ticket could be "skipped" again and the clinic's
+    // queueLength counter was decremented a second time (drifting negative).
+    const entry = await QueueEntry.findOneAndUpdate(
+      { _id: req.params.id, status: { $in: ['waiting', 'called'] } },
       { status: 'skipped' }, 
       { new: true }
     );
     if (!entry) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: `Cannot skip an entry with status "${existing.status}".` });
     }
 
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
@@ -674,10 +718,11 @@ const markNoShow = async (req, res) => {
     // Called -> No Show is the only valid path — a patient can only be
     // marked no-show after being called and failing to arrive within the
     // grace period, not from waiting or serving.
-    const existing = await QueueEntry.findById(req.params.id).select('status');
+    const existing = await QueueEntry.findById(req.params.id).select('status clinic');
     if (!existing) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
+    if (outsideStaffClinic(req, existing)) return forbidOtherClinic(res);
     if (existing.status !== 'called') {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
@@ -685,13 +730,15 @@ const markNoShow = async (req, res) => {
       });
     }
 
-    const entry = await QueueEntry.findByIdAndUpdate(
-      req.params.id, 
+    // Atomic on status so a manual no-show and the automatic grace sweeper
+    // can never both process (and double-decrement) the same ticket.
+    const entry = await QueueEntry.findOneAndUpdate(
+      { _id: req.params.id, status: 'called' },
       { status: 'no_show' }, 
       { new: true }
     );
     if (!entry) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
+      return res.status(409).json({ success: false, message: 'This ticket was already marked no-show.' });
     }
 
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
@@ -730,10 +777,33 @@ const cancelEntry = async (req, res) => {
         message: 'Not authorized to cancel this queue entry.' 
       });
     }
+    if (outsideStaffClinic(req, entry)) return forbidOtherClinic(res);
 
-    entry.status = 'cancelled';
-    entry.cancelledAt = new Date();
-    await entry.save();
+    // Only an active ticket can be cancelled. A second cancel (double tap,
+    // retry after a timeout) used to decrement queueLength again.
+    if (!['waiting', 'called', 'serving'].includes(entry.status)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: `This queue ticket is already ${entry.status.replace('_', '-')} and cannot be cancelled.`,
+      });
+    }
+
+    // Atomic on status: two cancels sent at the same moment (double tap,
+    // phone + tablet) can both pass the check above, but only one of them
+    // can flip an ACTIVE ticket to cancelled, so the counter drops once.
+    const cancelledAt = new Date();
+    const updated = await QueueEntry.findOneAndUpdate(
+      { _id: entry._id, status: { $in: ['waiting', 'called', 'serving'] } },
+      { $set: { status: 'cancelled', cancelledAt } },
+      { new: true }
+    );
+    if (!updated) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'This queue ticket was already cancelled or finished.',
+      });
+    }
+    entry.cancelledAt = cancelledAt;
 
     await Clinic.findByIdAndUpdate(entry.clinic, { $inc: { queueLength: -1 } });
 
@@ -758,6 +828,8 @@ const requeueEntry = async (req, res) => {
     if (!entry) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Queue entry not found.' });
     }
+
+    if (outsideStaffClinic(req, entry)) return forbidOtherClinic(res);
 
     // 'called' intentionally excluded — once a patient has been called,
     // staff must not be able to move them back to "waiting" (see the
@@ -867,8 +939,8 @@ const getQueueMetrics = async (req, res) => {
 const addWalkIn = async (req, res) => {
   try {
     let { patientName, phone, serviceName, serviceId, patientType, clinicId } = req.body;
-    if (!patientName) {
-      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Patient name is required.' });
+    if (!patientName || typeof patientName !== 'string' || patientName.trim().length < 2 || patientName.trim().length > 100) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Patient name is required (2 to 100 characters).' });
     }
 
     // Contact number is OPTIONAL: many walk-in patients (older patients in
@@ -885,9 +957,14 @@ const addWalkIn = async (req, res) => {
       }
     }
 
-    const cId = clinicId || req.user.clinicId;
+    // Staff and facility admins can only add walk-ins to their OWN clinic;
+    // a clinicId in the body is ignored for them (it used to be trusted).
+    const cId = req.user.clinicId || clinicId;
     if (!cId) {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Clinic ID is required.' });
+    }
+    if (!isObjectId(String(cId))) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Invalid clinic ID.' });
     }
 
     const clinic = await Clinic.findById(cId);

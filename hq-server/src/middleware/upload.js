@@ -12,19 +12,14 @@
  */
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 
 const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'patient-type-requests');
-fs.mkdirSync(uploadDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase() || '.jpg';
-    const unique = `${req.user?._id || 'anon'}-${Date.now()}${ext}`;
-    cb(null, unique);
-  },
-});
+// Memory storage: the controller validates the bytes, encrypts them and
+// saves them to MongoDB (models/IdPhoto.js). Nothing is written to disk,
+// because Heroku's disk is wiped on every restart. uploadDir is kept only so
+// photos uploaded before this change can still be read.
+const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
   const allowedMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
@@ -48,7 +43,24 @@ const fileFilter = (req, file, cb) => {
 const uploadIdPhoto = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 }, // 8MB, one photo
 });
 
-module.exports = { uploadIdPhoto, uploadDir };
+/**
+ * Checks the file's first bytes ("magic number") — unlike the mimetype or
+ * extension, these can't be faked by renaming a file. Returns the real
+ * image type, or null if the bytes are not a supported image.
+ */
+const detectImageType = (buf) => {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buf.slice(4, 8).toString('ascii') === 'ftyp') {
+    const brand = buf.slice(8, 12).toString('ascii');
+    if (/^(heic|heix|hevc|hevx|heim|heis|mif1|msf1)$/.test(brand)) return 'image/heic';
+  }
+  return null;
+};
+
+module.exports = { uploadIdPhoto, uploadDir, detectImageType };

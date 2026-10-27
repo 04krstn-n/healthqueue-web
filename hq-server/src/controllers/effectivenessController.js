@@ -12,6 +12,7 @@ const mongoose = require('mongoose');
 const BaselineObservation = require('../models/BaselineObservation');
 const QueueEntry = require('../models/QueueEntry');
 const { HttpStatus } = require('../config/config');
+const { isObjectId } = require('../utils/validators');
 
 const round1 = (n) => Math.round(n * 10) / 10;
 const summarize = (values) => {
@@ -23,7 +24,65 @@ const summarize = (values) => {
   return { n, mean: round1(mean), median: round1(median), min: v[0], max: v[n - 1] };
 };
 
-const scopeClinic = (req) => (req.user.role === 'facility_admin' ? req.user.clinicId : req.query.clinicId || req.body?.clinicId);
+/**
+ * Forecast accuracy (S4) — predicted vs actual waiting time per ticket.
+ *   predicted = QueueEntry.estimatedWaitMinutes (stored when the ticket was made)
+ *   actual    = QueueEntry.waitTimeInMinutes (joinedAt -> servedAt)
+ * MAE  = average of |predicted - actual|  (how far off, in minutes)
+ * Bias = average of (predicted - actual)   (negative = system under-estimates)
+ */
+const MIN_BASELINE_HISTORY = 5;
+
+/**
+ * Simple baseline the panel asked to compare against: "historical average
+ * waiting time". For each completed ticket (in time order), the baseline
+ * prediction is the average actual wait of all EARLIER completed tickets —
+ * it never sees the ticket it is predicting. Tickets with fewer than
+ * MIN_BASELINE_HISTORY earlier tickets are skipped.
+ */
+const baselineAccuracy = (entries) => {
+  const sorted = entries
+    .filter((e) => Number.isFinite(e.waitTimeInMinutes) && e.joinedAt)
+    .sort((a, b) => new Date(a.joinedAt) - new Date(b.joinedAt));
+  let sum = 0;
+  let count = 0;
+  const abs = [];
+  for (const e of sorted) {
+    if (count >= MIN_BASELINE_HISTORY) abs.push(Math.abs(sum / count - e.waitTimeInMinutes));
+    sum += e.waitTimeInMinutes;
+    count += 1;
+  }
+  const n = abs.length;
+  if (n === 0) return { n: 0, mae: null, within5Pct: null, within10Pct: null };
+  const pct = (k) => round1((abs.filter((x) => x <= k).length / n) * 100);
+  return { n, mae: round1(abs.reduce((a, b) => a + b, 0) / n), within5Pct: pct(5), within10Pct: pct(10) };
+};
+
+const forecastAccuracy = (entries) => {
+  const pairs = entries
+    .filter((e) => Number.isFinite(e.estimatedWaitMinutes) && Number.isFinite(e.waitTimeInMinutes))
+    .map((e) => ({ predicted: e.estimatedWaitMinutes, actual: e.waitTimeInMinutes }));
+  const n = pairs.length;
+  if (n === 0) return { n: 0, mae: null, bias: null, within5Pct: null, within10Pct: null, sample: [] };
+  const errs = pairs.map((p) => p.predicted - p.actual);
+  const abs = errs.map(Math.abs);
+  const pct = (k) => round1((abs.filter((x) => x <= k).length / n) * 100);
+  return {
+    n,
+    mae: round1(abs.reduce((a, b) => a + b, 0) / n),
+    bias: round1(errs.reduce((a, b) => a + b, 0) / n),
+    within5Pct: pct(5),
+    within10Pct: pct(10),
+    avgPredicted: round1(pairs.reduce((a, p) => a + p.predicted, 0) / n),
+    avgActual: round1(pairs.reduce((a, p) => a + p.actual, 0) / n),
+  };
+};
+
+const scopeClinic = (req) => {
+  if (req.user.role === 'facility_admin') return req.user.clinicId;
+  const c = req.query.clinicId || req.body?.clinicId;
+  return isObjectId(c) ? c : null;
+};
 
 const parseRange = (from, to) => {
   const range = {};
@@ -82,12 +141,12 @@ const getEffectiveness = async (req, res) => {
     const afterFilter = { clinic: clinicId, status: { $in: ['completed', 'done'] }, servedAt: { $ne: null } };
     if (Object.keys(afterRange).length) afterFilter.joinedAt = afterRange;
     const after = await QueueEntry.find(afterFilter)
-      .select('waitingTimeInMinutes serviceTimeInMinutes joinedRemotely').lean();
+      .select('queueNumber joinedAt estimatedWaitMinutes waitTimeInMinutes serviceTimeInMinutes joinedRemotely').lean();
 
     const beforeWait = summarize(before.map((b) => b.waitMinutes));
-    const afterWait = summarize(after.map((a) => a.waitingTimeInMinutes));
-    const remoteWait = summarize(after.filter((a) => a.joinedRemotely).map((a) => a.waitingTimeInMinutes));
-    const walkInWait = summarize(after.filter((a) => !a.joinedRemotely).map((a) => a.waitingTimeInMinutes));
+    const afterWait = summarize(after.map((a) => a.waitTimeInMinutes));
+    const remoteWait = summarize(after.filter((a) => a.joinedRemotely).map((a) => a.waitTimeInMinutes));
+    const walkInWait = summarize(after.filter((a) => !a.joinedRemotely).map((a) => a.waitTimeInMinutes));
 
     let change = null;
     if (beforeWait.n > 0 && afterWait.n > 0 && beforeWait.mean > 0) {
@@ -104,6 +163,36 @@ const getEffectiveness = async (req, res) => {
     if (afterWait.n < 30) warnings.push(`Only ${afterWait.n} "after" observations; 30 or more is recommended before drawing conclusions.`);
     warnings.push('Compare similar days and hours, and the same clinic. A difference does not by itself prove HealthQueue+ caused it.');
 
+    const accuracy = forecastAccuracy(after);
+    // Same tickets, predicted with the historical-average baseline instead.
+    accuracy.baseline = baselineAccuracy(after);
+    if (accuracy.mae !== null && accuracy.baseline.mae !== null) {
+      accuracy.comparison = {
+        maeDifferenceMinutes: round1(accuracy.mae - accuracy.baseline.mae), // negative = HealthQueue+ estimate is better
+        verdict: accuracy.mae < accuracy.baseline.mae
+          ? 'HealthQueue+ estimate is closer to the actual wait than the historical average'
+          : accuracy.mae > accuracy.baseline.mae
+            ? 'The historical average is closer to the actual wait than the HealthQueue+ estimate'
+            : 'Both methods have the same average error',
+      };
+    }
+    // Latest 20 tickets, so the predicted-vs-actual comparison can be shown
+    // row by row on the page (not just as a summary number).
+    accuracy.sample = after
+      .filter((e) => Number.isFinite(e.estimatedWaitMinutes) && Number.isFinite(e.waitTimeInMinutes))
+      .sort((x, y) => new Date(y.joinedAt) - new Date(x.joinedAt))
+      .slice(0, 20)
+      .map((e) => ({
+        queueNumber: e.queueNumber,
+        joinedAt: e.joinedAt,
+        predicted: e.estimatedWaitMinutes,
+        actual: e.waitTimeInMinutes,
+        error: e.estimatedWaitMinutes - e.waitTimeInMinutes,
+      }));
+    if (accuracy.n > 0 && accuracy.n < 30) {
+      warnings.push(`Forecast accuracy is based on only ${accuracy.n} completed ticket(s); validate with real clinic data before drawing conclusions.`);
+    }
+
     return res.status(HttpStatus.OK).json({
       success: true,
       data: {
@@ -117,6 +206,7 @@ const getEffectiveness = async (req, res) => {
           walkIns: walkInWait,
         },
         change,
+        forecastAccuracy: accuracy,
         warnings,
       },
     });
@@ -126,4 +216,7 @@ const getEffectiveness = async (req, res) => {
   }
 };
 
-module.exports = { addBaseline, getEffectiveness, _summarize: summarize };
+module.exports = {
+  addBaseline, getEffectiveness,
+  _summarize: summarize, _forecastAccuracy: forecastAccuracy, _baselineAccuracy: baselineAccuracy,
+};

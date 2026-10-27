@@ -114,13 +114,30 @@ try {
  * request (e.g. calling a patient's queue number must succeed even if
  * their push token is stale/invalid).
  */
-async function sendPushToUser(userId, { title, message, data = {} }) {
-  if (!firebaseReady || !userId) return;
+// Errors worth one more try (network blips / FCM overload). A bad or
+// unregistered token is permanent, so retrying it is pointless.
+const TRANSIENT_FCM_CODES = new Set([
+  'messaging/internal-error',
+  'messaging/server-unavailable',
+  'messaging/unknown-error',
+  'app/network-error',
+  'app/network-timeout',
+]);
+const PUSH_RETRY_DELAY_MS = 2000;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Returns { success, error } so callers can log the real outcome and fall
+ * back to SMS when the push did not go out (S3). Still never throws.
+ */
+async function sendPushToUser(userId, { title, message, data = {} }, attempt = 1) {
+  if (!firebaseReady) return { success: false, error: 'push not configured' };
+  if (!userId) return { success: false, error: 'no user' };
 
   try {
     const user = await User.findById(userId).select('+fcmToken');
     const token = user?.fcmToken;
-    if (!token) return; // no device registered — normal, not an error
+    if (!token) return { success: false, error: 'no device registered' };
 
     // `notification` (not just `data`) is what makes Android/iOS display
     // this automatically while the app is backgrounded or terminated,
@@ -147,7 +164,14 @@ async function sendPushToUser(userId, { title, message, data = {} }) {
       android: { priority: 'high' },
       apns: { payload: { aps: { sound: 'default' } } },
     });
+    return { success: true, error: '', attempts: attempt };
   } catch (err) {
+    // One automatic retry for temporary failures (S3: delayed delivery).
+    if (attempt === 1 && TRANSIENT_FCM_CODES.has(err.code)) {
+      console.warn(`[Push] Temporary failure for user ${userId} (${err.code}) — retrying once.`);
+      await wait(PUSH_RETRY_DELAY_MS);
+      return sendPushToUser(userId, { title, message, data }, 2);
+    }
     // A common cause here is a stale/uninstalled-app token
     // ('messaging/registration-token-not-registered') — clear it so we
     // stop trying to push to a dead token every time.
@@ -155,6 +179,7 @@ async function sendPushToUser(userId, { title, message, data = {} }) {
       await User.findByIdAndUpdate(userId, { fcmToken: null }).catch(() => {});
     }
     console.warn(`[Push] Failed to send to user ${userId}:`, err.message);
+    return { success: false, error: err.code || err.message, attempts: attempt };
   }
 }
 

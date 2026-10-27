@@ -2,6 +2,7 @@
  * Appointment Controller — Booking, scheduling, and slot management
  */
 const { resolveServices } = require('../utils/serviceSelection');
+const { isObjectId } = require('../utils/validators');
 const { slotInstant, slotWithinHours } = require('../utils/clinicHours');
 const Appointment = require('../models/Appointment');
 const Clinic = require('../models/Clinic');
@@ -24,6 +25,38 @@ const EARLY_CHECKIN_WINDOW_MINUTES = 15;
 // no longer honors the original slot — they queue based on when they
 // actually showed up, same as a walk-in arriving at that moment.
 const LATE_GRACE_MINUTES = 10;
+
+// ─── Slot capacity (S10) ────────────────────────────────────────────────────
+// How many patients one time slot can hold. Uses the clinic's configured
+// TimeSlot.maxPatients for that label when one exists, otherwise this
+// default. getAvailableSlots already hid slots at 3 bookings, but booking
+// itself never checked, so a direct API call (or two patients booking the
+// last seat at the same moment) could overbook a slot.
+const DEFAULT_SLOT_CAPACITY = 3;
+const ACTIVE_APPT_STATUSES = { $nin: ['cancelled', 'no_show'] };
+
+const slotCapacity = async (clinicId, timeSlot) => {
+  try {
+    const ts = await TimeSlot.findOne({ clinic: clinicId, label: timeSlot, isActive: true })
+      .select('maxPatients').lean();
+    if (ts && ts.maxPatients > 0) return ts.maxPatients;
+  } catch (_) { /* fall through to default */ }
+  return DEFAULT_SLOT_CAPACITY;
+};
+
+const dayBounds = (date) => {
+  const d = new Date(date);
+  const start = new Date(d); start.setHours(0, 0, 0, 0);
+  const end   = new Date(d); end.setHours(23, 59, 59, 999);
+  return { $gte: start, $lte: end };
+};
+
+// Same idea as queueController: staff/facility admins act only on their own
+// clinic's appointments. super_admin is not clinic-bound. Patients are
+// checked separately (ownership).
+const outsideStaffClinic = (req, appt) =>
+  ['staff', 'facility_admin'].includes(req.user.role) &&
+  String(appt.clinic?._id || appt.clinic) !== String(req.user.clinicId || '');
 
 /**
  * Computes the effective "joinedAt" an appointment check-in should use for
@@ -113,6 +146,19 @@ const bookAppointment = async (req, res) => {
         message: 'Clinic ID and appointment date are required.',
       });
     }
+    if (!isObjectId(clinicId) || Number.isNaN(new Date(appointmentDate).getTime())) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Invalid clinic ID or appointment date.',
+      });
+    }
+    if ((reason !== undefined && (typeof reason !== 'string' || reason.length > 500))
+      || (notes !== undefined && (typeof notes !== 'string' || notes.length > 500))) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Reason and notes must be text of at most 500 characters.',
+      });
+    }
 
     const clinic = await Clinic.findById(clinicId);
     if (!clinic) {
@@ -181,6 +227,22 @@ const bookAppointment = async (req, res) => {
       });
     }
 
+    // Capacity check (fast path). The authoritative check is the re-count
+    // after insert below, which also covers simultaneous bookings.
+    const capacity = await slotCapacity(clinicId, timeSlot);
+    const slotFilter = {
+      clinic: clinicId,
+      appointmentDate: { $gte: dayStart, $lte: dayEnd },
+      timeSlot,
+      status: ACTIVE_APPT_STATUSES,
+    };
+    if ((await Appointment.countDocuments(slotFilter)) >= capacity) {
+      return res.status(409).json({
+        success: false,
+        message: 'This time slot is already full. Please choose another time.',
+      });
+    }
+
     const appointment = await Appointment.create({
       clinic: clinicId,
       patient: req.user._id,
@@ -214,6 +276,19 @@ const bookAppointment = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'You already have an appointment scheduled for this time slot.',
+      });
+    }
+
+    // Capacity race guard: every simultaneous booker sees the same ordered
+    // list; anyone whose booking lands beyond the capacity removes itself,
+    // so the slot can never end up with more than `capacity` bookings.
+    const slotBookings = await Appointment.find(slotFilter).select('_id').sort({ _id: 1 }).lean();
+    const myIndex = slotBookings.findIndex((a) => String(a._id) === String(appointment._id));
+    if (myIndex >= capacity) {
+      await Appointment.deleteOne({ _id: appointment._id });
+      return res.status(409).json({
+        success: false,
+        message: 'This time slot was just filled by another patient. Please choose another time.',
       });
     }
 
@@ -290,6 +365,31 @@ const updateAppointment = async (req, res) => {
         message: 'Not authorized to modify this appointment.' 
       });
     }
+    if (outsideStaffClinic(req, appt)) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'This appointment belongs to another clinic.' });
+    }
+
+    // Rescheduling into a different slot must respect that slot's capacity.
+    const newDate = appointmentDate ? new Date(appointmentDate) : appt.appointmentDate;
+    const newSlot = timeSlot || appt.timeSlot;
+    const slotChanged = Boolean(appointmentDate || timeSlot) &&
+      (newSlot !== appt.timeSlot || dayBounds(newDate).$gte.getTime() !== dayBounds(appt.appointmentDate).$gte.getTime());
+    if (slotChanged) {
+      const at = slotInstant(newDate, newSlot);
+      if (at && at.getTime() <= Date.now()) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'That time has already passed. Please choose a future date and time.' });
+      }
+      const taken = await Appointment.countDocuments({
+        _id: { $ne: appt._id },
+        clinic: appt.clinic,
+        appointmentDate: dayBounds(newDate),
+        timeSlot: newSlot,
+        status: ACTIVE_APPT_STATUSES,
+      });
+      if (taken >= await slotCapacity(appt.clinic, newSlot)) {
+        return res.status(409).json({ success: false, message: 'That time slot is already full. Please choose another time.' });
+      }
+    }
 
     // Same rule as updateStatus — a cancelled appointment can't be
     // rescheduled/edited either, by staff or the patient.
@@ -302,6 +402,11 @@ const updateAppointment = async (req, res) => {
 
     if (appointmentDate) appt.appointmentDate = new Date(appointmentDate);
     if (timeSlot) appt.timeSlot = timeSlot;
+    // New date/time -> the patient should be reminded again for the new slot.
+    if (slotChanged) {
+      appt.reminderSent = false;
+      appt.reminder1hSent = false;
+    }
     if (notes) appt.notes = notes;
     if (reason) appt.reason = reason;
 
@@ -336,6 +441,12 @@ const cancelMyAppointment = async (req, res) => {
         success: false, 
         message: 'Not authorized to cancel this appointment.' 
       });
+    }
+    if (outsideStaffClinic(req, appt)) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'This appointment belongs to another clinic.' });
+    }
+    if (['cancelled', 'completed', 'no_show'].includes(appt.status)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: `This appointment is already ${appt.status.replace('_', '-')}.` });
     }
 
     appt.status = 'cancelled';
@@ -441,8 +552,11 @@ const getAvailableSlots = async (req, res) => {
 
     // Only offer slots that are still in the future and inside the clinic's hours.
     const clinicDoc = await Clinic.findById(clinicId).select('operatingHours');
+    const capacities = {};
+    (await TimeSlot.find({ clinic: clinicId, isActive: true }).select('label maxPatients').lean())
+      .forEach((t) => { if (t.maxPatients > 0) capacities[t.label] = t.maxPatients; });
     const available = defaultSlots.filter((s) => {
-      if ((counts[s] || 0) >= 3) return false;
+      if ((counts[s] || 0) >= (capacities[s] || DEFAULT_SLOT_CAPACITY)) return false;
       const at = slotInstant(date, s);
       if (at && at.getTime() <= Date.now()) return false;
       return slotWithinHours(clinicDoc?.operatingHours, s) !== false;
@@ -510,11 +624,24 @@ const deleteTimeSlot = async (req, res) => {
 
 const getAppointment = async (req, res) => {
   try {
-    const appt = await Appointment.findById(req.params.id).populate('clinic patient');
+    const appt = await Appointment.findById(req.params.id)
+      .populate('clinic', 'name address city contactNumber')
+      .populate('patient', 'fullName email phone');
     if (!appt) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Not found.' });
+
+    // S9 — patient data: a patient may only read their own appointment, and
+    // staff only appointments of their own clinic. Before this, any logged-in
+    // user could read any appointment (with the patient's details) by ID.
+    const ownerId = String(appt.patient?._id || appt.patient || '');
+    if (req.user.role === 'patient' && ownerId !== String(req.user._id)) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'Not authorized to view this appointment.' });
+    }
+    if (outsideStaffClinic(req, appt)) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'This appointment belongs to another clinic.' });
+    }
     return res.status(HttpStatus.OK).json({ success: true, data: appt });
   } catch (err) {
-    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: err.message });
+    return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ success: false, message: 'Failed to fetch appointment.' });
   }
 };
 
@@ -535,9 +662,12 @@ const updateStatus = async (req, res) => {
       no_show:   [],
     };
 
-    const existing = await Appointment.findById(req.params.id).select('status');
+    const existing = await Appointment.findById(req.params.id).select('status clinic');
     if (!existing) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Appointment not found.' });
+    }
+    if (outsideStaffClinic(req, existing)) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'This appointment belongs to another clinic.' });
     }
 
     const allowed = VALID_TRANSITIONS[existing.status] || [];

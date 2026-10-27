@@ -3,14 +3,22 @@
  * forgot-password, and profile.
  */
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Patient = require('../models/Patient');
 const PendingRegistration = require('../models/PendingRegistration');
 const PasswordReset = require('../models/PasswordReset');
 const { signToken } = require('../utils/token');
+const RevokedToken = require('../models/RevokedToken');
 const { HttpStatus, NODE_ENV } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
-const { sendOTP } = require('../services/smsService');
+const { sendOTP, sendSMS } = require('../services/smsService');
+const {
+  normalizePhone,
+  isValidPHMobile,
+  isObjectId,
+  PHONE_FORMAT_MESSAGE,
+} = require('../utils/validators');
 const {
   validateEmailAddress,
   sendOTPEmail,
@@ -39,22 +47,10 @@ const MAX_RESET_OTP_ATTEMPTS = 5;
 const smsDelivered = (r) => Boolean(r && r.success && !r.mock);
 const devOtpField = (r, otp) => (r && r.mock && !isProd ? { devOtp: otp } : {});
 
-// Normalizes a PH mobile number to a single canonical form (09XXXXXXXXX)
-// before it's ever stored or queried. The mobile app's register/forgot-
-// password screens both accept either 09XXXXXXXXX or +639XXXXXXXXX as
-// valid input (same regex, either format passes), but nothing anywhere
-// normalized them to one form — so a patient who registered as
-// "09171234567" and later typed "+639171234567" at login would get a
-// silent "account not found" from an exact-match query, even with the
-// correct password. This is applied consistently everywhere a phone
-// number is stored or looked up (register, login, forgot-password).
-const normalizePhone = (phone) => {
-  if (!phone) return phone;
-  const digits = phone.toString().trim().replace(/[^\d]/g, '');
-  if (digits.startsWith('63') && digits.length === 12) return `0${digits.slice(2)}`;
-  if (digits.startsWith('9') && digits.length === 10) return `0${digits}`;
-  return digits;
-};
+// normalizePhone (shared, utils/validators.js) turns 09XXXXXXXXX,
+// +639XXXXXXXXX and 9XXXXXXXXX into one canonical 09XXXXXXXXX form before any
+// phone is stored or looked up, so login/forgot-password exact matches work
+// whichever format the patient types.
 
 // The exact wording the mobile app relies on to recognize a phone-duplicate
 // rejection (see register_screen.dart) — do not reword without updating
@@ -84,6 +80,15 @@ const validatePasswordStrength = (password) => {
 // indefinitely with zero server-side limit).
 const MAX_OTP_ATTEMPTS = 3;
 
+// Per-account lockout (panel: "secure login authentication"). The IP rate
+// limiter in server.js slows one attacker down; this stops a password being
+// guessed from many IPs. After MAX_LOGIN_FAILURES wrong passwords in a row the
+// account refuses logins for LOCKOUT_MINUTES, then unlocks by itself.
+const MAX_LOGIN_FAILURES = 5;
+const LOCKOUT_MINUTES = 15;
+
+const looksLikeBcryptHash = (v) => typeof v === 'string' && /^\$2[aby]\$\d{2}\$.{53}$/.test(v);
+
 // POST /api/auth/register — Step 1 of phone-verified registration. Does NOT
 // create a User/Patient yet — only a PendingRegistration, so an abandoned
 // or never-verified signup never leaves a real account behind. The actual
@@ -102,6 +107,23 @@ const register = async (req, res) => {
       });
     }
 
+    if (typeof fullName !== 'string' || fullName.trim().length < 2 || fullName.trim().length > 100) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Full name must be 2 to 100 characters.',
+      });
+    }
+
+    if (dateOfBirth) {
+      const dob = new Date(dateOfBirth);
+      if (Number.isNaN(dob.getTime()) || dob > new Date() || dob.getFullYear() < 1900) {
+        return res.status(HttpStatus.BAD_REQUEST).json({
+          success: false,
+          message: 'Enter a valid date of birth.',
+        });
+      }
+    }
+
     if (gender !== undefined && gender !== '' && !['Male', 'Female'].includes(gender)) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
@@ -118,6 +140,9 @@ const register = async (req, res) => {
     }
 
     const cleanPhone = normalizePhone(phone);
+    if (!isValidPHMobile(cleanPhone)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: PHONE_FORMAT_MESSAGE });
+    }
     let cleanEmail = null;
     if (email && email.trim()) {
       const emailCheck = await validateEmailAddress(email);
@@ -163,7 +188,10 @@ const register = async (req, res) => {
         fullName: fullName.trim(),
         email: cleanEmail,
         phone: cleanPhone,
-        password, // plain — see PendingRegistration.js for why
+        // Hashed now, so no plain-text password is ever stored, even in this
+        // short-lived record. verifyOTP() tells User's pre-save hook not to
+        // hash it a second time.
+        password: await bcrypt.hash(password, 10),
         dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
         gender: gender || '',
         otp: otpCode,
@@ -214,7 +242,7 @@ const register = async (req, res) => {
     }
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       success: false,
-      message: err.message || 'Registration failed.',
+      message: 'Registration failed. Please try again.',
     });
   }
 };
@@ -229,6 +257,12 @@ const verifyOTP = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'Registration ID and OTP code are required.',
+      });
+    }
+    if (!isObjectId(userId) || !/^\d{6}$/.test(String(otp).trim())) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'Invalid registration ID or OTP format. The OTP is 6 digits.',
       });
     }
 
@@ -300,17 +334,22 @@ const verifyOTP = async (req, res) => {
       }
     }
 
-    const user = await User.create({
+    const user = new User({
       fullName: pending.fullName,
       email: pending.email || undefined, // undefined, not null — avoids
                                           // colliding with Mongo's sparse
                                           // unique index on a literal null
       phone: pending.phone,
-      password: pending.password, // plain — User's pre-save hook hashes it once
+      password: pending.password,
       role: 'patient',
       isVerified: true, // just proved phone ownership via OTP
       isActive: true,
     });
+    // PendingRegistration already holds a bcrypt hash; skip the pre-save
+    // re-hash. (A record created before this change still holds plain text,
+    // so only skip when it really is a hash.)
+    if (looksLikeBcryptHash(pending.password)) user.$locals.passwordAlreadyHashed = true;
+    await user.save();
 
     await Patient.create({
       user: user._id,
@@ -371,6 +410,9 @@ const verifyOTP = async (req, res) => {
 const resendOTP = async (req, res) => {
   try {
     const { userId } = req.body;
+    if (!isObjectId(userId)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Invalid registration ID.' });
+    }
     const pending = await PendingRegistration.findById(userId);
 
     if (!pending) {
@@ -432,7 +474,7 @@ const login = async (req, res) => {
       ? { email: raw.toLowerCase() }
       : { phone: normalizePhone(raw) };
 
-    const user = await User.findOne(query).select('+password');
+    const user = await User.findOne(query).select('+password +failedLoginAttempts +lockUntil');
     if (!user) {
       return res.status(HttpStatus.UNAUTHORIZED).json({
         success: false,
@@ -447,12 +489,42 @@ const login = async (req, res) => {
       });
     }
 
-    const match = await user.comparePassword(password);
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      const mins = Math.max(1, Math.ceil((user.lockUntil - Date.now()) / 60000));
+      return res.status(HttpStatus.TOO_MANY_REQUESTS || 429).json({
+        success: false,
+        message: `Too many failed login attempts. Please try again in ${mins} minute(s) or reset your password.`,
+        lockedUntil: user.lockUntil,
+      });
+    }
+
+    const match = await user.comparePassword(String(password));
     if (!match) {
+      const failures = (user.failedLoginAttempts || 0) + 1;
+      const update = failures >= MAX_LOGIN_FAILURES
+        ? { failedLoginAttempts: 0, lockUntil: new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000) }
+        : { failedLoginAttempts: failures };
+      await User.updateOne({ _id: user._id }, { $set: update });
+      if (update.lockUntil && ['super_admin', 'facility_admin', 'staff'].includes(user.role)) {
+        await logAction({
+          actor: user,
+          action: 'account_locked',
+          targetType: 'User',
+          targetId: user._id,
+          targetLabel: user.fullName,
+          clinicId: user.clinicId,
+        }).catch(() => {});
+      }
       return res.status(HttpStatus.UNAUTHORIZED).json({
         success: false,
-        message: looksLikeEmail ? 'Invalid email or password.' : 'Invalid phone number or password.',
+        message: update.lockUntil
+          ? `Too many failed login attempts. Your account is locked for ${LOCKOUT_MINUTES} minutes.`
+          : (looksLikeEmail ? 'Invalid email or password.' : 'Invalid phone number or password.'),
       });
+    }
+
+    if (user.failedLoginAttempts || user.lockUntil) {
+      await User.updateOne({ _id: user._id }, { $set: { failedLoginAttempts: 0, lockUntil: null } });
     }
 
     // Unverified patient accounts must complete OTP verification before they
@@ -610,12 +682,20 @@ const forgotPassword = async (req, res) => {
       });
     }
     const cleanPhone = normalizePhone(phone);
+    if (!isValidPHMobile(cleanPhone)) {
+      return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: PHONE_FORMAT_MESSAGE });
+    }
 
+    // Same answer whether or not the number is registered, so this endpoint
+    // can't be used to find out which phone numbers have accounts. An
+    // unknown number gets a decoy resetId; step 2 simply fails for it.
+    const genericSmsMessage = 'If that number has an account, a verification code has been sent to it.';
     const user = await User.findOne({ phone: cleanPhone });
-    if (!user) {
-      return res.status(HttpStatus.NOT_FOUND).json({
-        success: false,
-        message: 'No account found with that phone number.',
+    if (!user || !user.isActive) {
+      return res.status(HttpStatus.OK).json({
+        success: true,
+        message: genericSmsMessage,
+        resetId: new (require('mongoose').Types.ObjectId)(),
       });
     }
     if (ADMIN_ROLES.includes(user.role)) {
@@ -663,7 +743,7 @@ const forgotPassword = async (req, res) => {
 
     return res.status(HttpStatus.OK).json({
       success: true,
-      message: 'A verification code has been sent to your phone.',
+      message: genericSmsMessage,
       resetId: reset._id,
     });
   } catch (err) {
@@ -685,6 +765,12 @@ const verifyResetOtp = async (req, res) => {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'Reset ID and OTP code are required.',
+      });
+    }
+    if (!isObjectId(resetId)) {
+      return res.status(HttpStatus.NOT_FOUND).json({
+        success: false,
+        message: 'This reset request was not found or has expired. Please start over.',
       });
     }
 
@@ -762,6 +848,13 @@ const resetPassword = async (req, res) => {
       });
     }
 
+    if (!isObjectId(resetId) || typeof resetToken !== 'string' || typeof newPassword !== 'string') {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'This reset session is no longer valid. Please start over.',
+      });
+    }
+
     const passwordProblems = validatePasswordStrength(newPassword);
     if (passwordProblems.length > 0) {
       return res.status(HttpStatus.BAD_REQUEST).json({
@@ -804,6 +897,9 @@ const resetPassword = async (req, res) => {
     // shouldn't be stuck) — clear the flag here too, not just in
     // userController.changePassword.
     user.mustChangePassword = false;
+    // A successful reset also clears any login lockout.
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
     await user.save();
 
     // Fully consumed — remove rather than just flag, so nothing lingers
@@ -814,6 +910,13 @@ const resetPassword = async (req, res) => {
     // Fire-and-forget: a mail failure must not undo a successful reset.
     if (user.email && NON_PATIENT_ROLES.includes(user.role)) {
       sendPasswordChangedEmail(user.email).catch(() => {});
+    }
+    // Patients (and staff without email) get the same security notice by SMS.
+    if (user.phone && (user.role === 'patient' || !user.email)) {
+      sendSMS(
+        user.phone,
+        '[HealthQueue+] Your password was just changed. If this was not you, reset your password now and contact the clinic.'
+      ).catch(() => {});
     }
 
     return res.status(HttpStatus.OK).json({
@@ -888,6 +991,17 @@ const getMe = async (req, res) => {
 // job is accountability, not invalidating the token.
 const logout = async (req, res) => {
   try {
+    // Revoke this exact token server-side (S9), so it stops working on the
+    // API immediately instead of staying valid until it expires.
+    const p = req.tokenPayload;
+    if (p?.jti) {
+      await RevokedToken.updateOne(
+        { jti: p.jti },
+        { $setOnInsert: { jti: p.jti, user: req.user._id, expiresAt: new Date((p.exp || Math.floor(Date.now() / 1000) + 86400) * 1000) } },
+        { upsert: true }
+      ).catch((e) => console.warn('[logout] revoke failed:', e.message));
+    }
+
     if (['super_admin', 'facility_admin', 'staff'].includes(req.user.role)) {
       await logAction({
         actor: req.user,

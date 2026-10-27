@@ -64,6 +64,7 @@ export default function EffectivenessPage() {
   const b = data?.before?.waitMinutes
   const a = data?.after?.waitMinutes
   const ch = data?.change
+  const fa = data?.forecastAccuracy
 
   return (
     <div style={{ padding: 24, display: 'grid', gap: 16, maxWidth: 980 }}>
@@ -105,6 +106,57 @@ export default function EffectivenessPage() {
         {(data?.warnings || []).map((w) => (
           <div key={w} style={{ fontSize: 12, color: '#B45309', marginTop: 4 }}>• {w}</div>
         ))}
+      </div>
+
+      {/* S4 — forecasting accuracy: predicted vs actual waiting time per ticket */}
+      <div className="card" style={{ padding: 20 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Forecast accuracy (predicted vs actual wait)</div>
+        <p style={{ fontSize: 12, color: 'var(--muted)', margin: '0 0 10px' }}>
+          Predicted = the estimated wait shown to the patient when the ticket was created. Actual = time from joining the queue until service started.
+          Uses the same "After" date range above.
+        </p>
+        {loading ? <div>Loading…</div> : !fa || fa.n === 0 ? (
+          <div style={{ fontSize: 13 }}>No completed tickets with both a predicted and an actual wait yet.</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', fontSize: 13, marginBottom: 12 }}>
+              <div><div style={{ color: 'var(--muted)', fontSize: 11 }}>Tickets (n)</div><strong>{fa.n}</strong></div>
+              <div><div style={{ color: 'var(--muted)', fontSize: 11 }}>Mean absolute error</div><strong>{fa.mae} min</strong></div>
+              <div><div style={{ color: 'var(--muted)', fontSize: 11 }}>Bias</div><strong>{fa.bias > 0 ? '+' : ''}{fa.bias} min</strong>
+                <div style={{ fontSize: 11, color: 'var(--muted)' }}>{fa.bias < 0 ? 'under-estimates' : fa.bias > 0 ? 'over-estimates' : 'no bias'}</div></div>
+              <div><div style={{ color: 'var(--muted)', fontSize: 11 }}>Within ±5 min</div><strong>{fa.within5Pct}%</strong></div>
+              <div><div style={{ color: 'var(--muted)', fontSize: 11 }}>Within ±10 min</div><strong>{fa.within10Pct}%</strong></div>
+              <div><div style={{ color: 'var(--muted)', fontSize: 11 }}>Avg predicted / actual</div><strong>{fa.avgPredicted} / {fa.avgActual} min</strong></div>
+            </div>
+            {fa.baseline && fa.baseline.n > 0 && (
+              <div style={{ margin: '0 0 12px', padding: 10, border: '1px solid var(--border, #e5e7eb)', borderRadius: 8, fontSize: 12 }}>
+                <strong>Baseline comparison (historical average waiting time)</strong>
+                <div style={{ marginTop: 4 }}>
+                  HealthQueue+ estimate: MAE {fa.mae} min, {fa.within10Pct}% within ±10 min
+                  {' · '}
+                  Historical average: MAE {fa.baseline.mae} min, {fa.baseline.within10Pct}% within ±10 min
+                  {' '}(n = {fa.baseline.n})
+                </div>
+                {fa.comparison && <div style={{ marginTop: 4, color: 'var(--muted)' }}>{fa.comparison.verdict}.</div>}
+              </div>
+            )}
+            <table className="table" style={{ width: '100%', fontSize: 12 }}>
+              <thead><tr><th>Ticket</th><th>Joined</th><th>Predicted (min)</th><th>Actual (min)</th><th>Difference (min)</th></tr></thead>
+              <tbody>
+                {(fa.sample || []).map((r, i) => (
+                  <tr key={`${r.queueNumber}-${i}`}>
+                    <td>{r.queueNumber}</td>
+                    <td>{r.joinedAt ? new Date(r.joinedAt).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                    <td>{r.predicted}</td>
+                    <td>{r.actual}</td>
+                    <td style={{ color: Math.abs(r.error) <= 5 ? '#15803D' : '#B45309' }}>{r.error > 0 ? '+' : ''}{r.error}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Showing the latest {(fa.sample || []).length} of {fa.n} tickets.</div>
+          </>
+        )}
       </div>
 
       <div className="card" style={{ padding: 20 }}>

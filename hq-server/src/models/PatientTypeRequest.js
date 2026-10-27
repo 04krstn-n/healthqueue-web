@@ -23,7 +23,10 @@ const PatientTypeRequestSchema = new mongoose.Schema(
     // Path on disk relative to the uploads root (see middleware/upload.js)
     // — never the absolute path, so the storage location can move without
     // a data migration.
-    idPhotoPath: { type: String, required: true },
+    // New uploads: the photo lives in the IdPhoto collection (encrypted).
+    idPhoto:     { type: mongoose.Schema.Types.ObjectId, ref: 'IdPhoto', default: null },
+    // Older uploads saved to the server disk before IdPhoto existed.
+    idPhotoPath: { type: String, default: null },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],

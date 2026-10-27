@@ -79,7 +79,26 @@ const AppointmentSchema = new mongoose.Schema(
     previousDate:     { type: Date, default: null },
     previousTimeSlot: { type: String, default: null },
     
-    reminderSent: { type: Boolean, default: false },
+    // Appointment reminders (services/appointmentReminder.js):
+    //   reminderSent    — "tomorrow / within 24 hours" reminder
+    //   reminder1hSent  — "in about 1 hour" reminder
+    // Both are reset when the appointment is rescheduled.
+    reminderSent:   { type: Boolean, default: false },
+    reminder1hSent: { type: Boolean, default: false },
+    // Delivery record for reminders (channel, success, error) so failed or
+    // delayed reminders are visible, same idea as QueueEntry.notifyLog.
+    reminderLog: {
+      type: [{
+        _id: false,
+        kind: String,
+        channel: String,
+        success: Boolean,
+        error: String,
+        at: Date,
+      }],
+      default: [],
+      select: false,
+    },
     
     // Linked queue entry when patient checks in on-site
     queueEntry: {

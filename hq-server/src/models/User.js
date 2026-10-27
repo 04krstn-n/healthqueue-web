@@ -82,6 +82,10 @@ const UserSchema = new mongoose.Schema(
     default: 'Male' 
   },
     specialization: { type: String, trim: true, default: '' },
+    // Per-account login lockout (see authController.login): consecutive
+    // wrong passwords, and the time until which logins are refused.
+    failedLoginAttempts: { type: Number, default: 0, select: false },
+    lockUntil: { type: Date, default: null, select: false },
   },
   { timestamps: true }
 );
@@ -89,6 +93,9 @@ const UserSchema = new mongoose.Schema(
 // Hash password before saving — only when password field is modified
 UserSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
+  // Set by authController.verifyOTP: the password copied from
+  // PendingRegistration is already a bcrypt hash and must not be hashed twice.
+  if (this.$locals && this.$locals.passwordAlreadyHashed) return next();
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);

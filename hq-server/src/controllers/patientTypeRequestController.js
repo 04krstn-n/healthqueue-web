@@ -5,23 +5,48 @@ const Patient = require('../models/Patient');
 const QueueEntry = require('../models/QueueEntry');
 const { HttpStatus } = require('../config/config');
 const { logAction } = require('../utils/auditLog');
-const { uploadDir } = require('../middleware/upload');
+const { uploadDir, detectImageType } = require('../middleware/upload');
+const IdPhoto = require('../models/IdPhoto');
+const { encryptBuffer, decryptBuffer } = require('../utils/fieldCrypto');
+const { patientBelongsToClinic, getClinicPatientIds } = require('./patientController');
+const { isObjectId } = require('../utils/validators');
+
+const CLINIC_SCOPED_ROLES = ['staff', 'facility_admin'];
+
+/**
+ * Data-protection scope for ID photos and approvals (RA 10173): staff and
+ * facility admins may only see/review requests from patients who have a queue
+ * ticket or appointment at THEIR clinic. Super admins see all. Before this,
+ * any staff member of any clinic could open every patient's ID photo.
+ */
+const canReview = async (user, request) => {
+  if (user.role === 'super_admin') return true;
+  if (!CLINIC_SCOPED_ROLES.includes(user.role) || !user.clinicId) return false;
+  return patientBelongsToClinic(request.patient, user.clinicId);
+};
 
 // POST /api/patient-type-requests (patient, multipart/form-data: photo, requestedType)
 const createRequest = async (req, res) => {
   try {
     const { requestedType } = req.body;
     if (!['Senior Citizen', 'PWD', 'Pregnant'].includes(requestedType)) {
-      if (req.file) fs.unlink(req.file.path, () => {});
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'requestedType must be Senior Citizen, PWD, or Pregnant.',
       });
     }
-    if (!req.file) {
+    if (!req.file || !req.file.buffer) {
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'A photo of your ID/certificate is required.',
+      });
+    }
+    // Check the real file content, not just the name/mimetype the phone sent.
+    const realType = detectImageType(req.file.buffer);
+    if (!realType) {
+      return res.status(HttpStatus.BAD_REQUEST).json({
+        success: false,
+        message: 'The file is not a valid image (JPEG, PNG, WEBP or HEIC).',
       });
     }
 
@@ -32,22 +57,31 @@ const createRequest = async (req, res) => {
       status: 'pending',
     });
     if (existingPending) {
-      fs.unlink(req.file.path, () => {});
       return res.status(HttpStatus.BAD_REQUEST).json({
         success: false,
         message: 'You already have a pending request awaiting review.',
       });
     }
 
+    const enc = encryptBuffer(req.file.buffer);
+    const photo = await IdPhoto.create({
+      owner: req.user._id,
+      mimeType: realType,
+      size: req.file.size,
+      data: enc.data,
+      iv: enc.iv,
+      tag: enc.tag,
+      encrypted: enc.encrypted,
+    });
+
     const request = await PatientTypeRequest.create({
       patient: req.user._id,
       requestedType,
-      idPhotoPath: req.file.filename,
+      idPhoto: photo._id,
     });
 
     return res.status(HttpStatus.OK).json({ success: true, data: request });
   } catch (err) {
-    if (req.file) fs.unlink(req.file.path, () => {});
     console.error('createRequest Error:', err.message);
     return res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
       success: false,
@@ -72,14 +106,23 @@ const getMyRequest = async (req, res) => {
 };
 
 // GET /api/patient-type-requests?status=pending (staff/facility_admin/super_admin)
-// Not clinic-scoped — patient accounts aren't tied to a single clinic (they
-// can join any clinic's queue), so any staff member can review any request,
-// matching how PUT /api/patients/:id (the actual patientType write) is
-// already staff/admin-wide rather than clinic-restricted.
+// Clinic-scoped for staff/facility_admin: only requests from patients who
+// have a queue ticket or appointment at their clinic (see canReview). A
+// patient who has not yet joined a queue or booked at any clinic appears to
+// that clinic's staff as soon as they do.
 const getRequests = async (req, res) => {
   try {
     const filter = {};
-    if (req.query.status) filter.status = req.query.status;
+    if (req.query.status) {
+      if (!['pending', 'approved', 'rejected'].includes(req.query.status)) {
+        return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'Invalid status filter.' });
+      }
+      filter.status = req.query.status;
+    }
+    if (req.user.role !== 'super_admin') {
+      if (!req.user.clinicId) return res.status(HttpStatus.OK).json({ success: true, data: [] });
+      filter.patient = { $in: await getClinicPatientIds(req.user.clinicId) };
+    }
     const requests = await PatientTypeRequest.find(filter)
       .populate('patient', 'fullName email phone')
       .populate('reviewedBy', 'fullName')
@@ -99,18 +142,33 @@ const getRequests = async (req, res) => {
 // static folder, since these are identity documents (ID/certificate photos).
 const getRequestPhoto = async (req, res) => {
   try {
+    if (!isObjectId(req.params.id)) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Request not found.' });
+    }
     const request = await PatientTypeRequest.findById(req.params.id);
     if (!request) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Request not found.' });
     }
     const isOwner = request.patient.toString() === req.user._id.toString();
-    const isStaff = ['staff', 'facility_admin', 'super_admin'].includes(req.user.role);
-    if (!isOwner && !isStaff) {
+    if (!isOwner && !(await canReview(req.user, request))) {
       return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'Not authorized.' });
     }
-    const filePath = path.join(uploadDir, request.idPhotoPath);
-    if (!fs.existsSync(filePath)) {
-      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Photo not found.' });
+
+    // Identity documents must never be cached by browsers or proxies.
+    res.set('Cache-Control', 'no-store');
+
+    if (request.idPhoto) {
+      const photo = await IdPhoto.findById(request.idPhoto).select('+data +iv +tag');
+      if (!photo) return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Photo not found.' });
+      const bytes = decryptBuffer(photo);
+      res.set('Content-Type', photo.mimeType);
+      return res.send(bytes);
+    }
+
+    // Legacy: photos uploaded before the IdPhoto collection existed.
+    const filePath = path.join(uploadDir, path.basename(request.idPhotoPath || ''));
+    if (!request.idPhotoPath || !fs.existsSync(filePath)) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Photo not found. Please ask the patient to submit it again.' });
     }
     return res.sendFile(filePath);
   } catch (err) {
@@ -125,9 +183,15 @@ const getRequestPhoto = async (req, res) => {
 // picks it up automatically on their next queue join.
 const approveRequest = async (req, res) => {
   try {
+    if (!isObjectId(req.params.id)) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Request not found.' });
+    }
     const request = await PatientTypeRequest.findById(req.params.id);
     if (!request) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Request not found.' });
+    }
+    if (!(await canReview(req.user, request))) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'This patient has no record at your clinic.' });
     }
     if (request.status !== 'pending') {
       return res.status(HttpStatus.BAD_REQUEST).json({
@@ -157,7 +221,7 @@ const approveRequest = async (req, res) => {
     request.status = 'approved';
     request.reviewedBy = req.user._id;
     request.reviewedAt = new Date();
-    request.reviewNote = req.body.note || '';
+    request.reviewNote = typeof req.body.note === 'string' ? req.body.note.slice(0, 500) : '';
     await request.save();
 
     await logAction({
@@ -200,9 +264,15 @@ const approveRequest = async (req, res) => {
 // PUT /api/patient-type-requests/:id/reject (staff/facility_admin/super_admin)
 const rejectRequest = async (req, res) => {
   try {
+    if (!isObjectId(req.params.id)) {
+      return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Request not found.' });
+    }
     const request = await PatientTypeRequest.findById(req.params.id);
     if (!request) {
       return res.status(HttpStatus.NOT_FOUND).json({ success: false, message: 'Request not found.' });
+    }
+    if (!(await canReview(req.user, request))) {
+      return res.status(HttpStatus.FORBIDDEN).json({ success: false, message: 'This patient has no record at your clinic.' });
     }
     if (request.status !== 'pending') {
       return res.status(HttpStatus.BAD_REQUEST).json({
@@ -214,7 +284,7 @@ const rejectRequest = async (req, res) => {
     request.status = 'rejected';
     request.reviewedBy = req.user._id;
     request.reviewedAt = new Date();
-    request.reviewNote = req.body.note || '';
+    request.reviewNote = typeof req.body.note === 'string' ? req.body.note.slice(0, 500) : '';
     await request.save();
 
     await logAction({
