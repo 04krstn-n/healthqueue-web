@@ -23,7 +23,10 @@ const getUsers = async (req, res) => {
   try {
     const filter = {};
     if (req.user.role === 'facility_admin') {
+      // A facility admin manages only their clinic's healthcare staff, so the
+      // Staff Management list must not include their own admin account.
       filter.clinicId = req.user.clinicId;
+      filter.role = 'staff';
     } else {
       if (req.query.role) filter.role = req.query.role;
       if (req.query.clinicId) filter.clinicId = req.query.clinicId;

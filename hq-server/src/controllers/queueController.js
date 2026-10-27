@@ -900,7 +900,10 @@ const markOnTheWay = async (req, res) => {
 // GET /api/queues/metrics — Excludes cancelled transactions from average wait time
 const getQueueMetrics = async (req, res) => {
   try {
-    const clinicId = req.query.clinicId || req.user.clinicId;
+    // Staff/facility admins: always their own clinic.
+    const clinicId = ['staff', 'facility_admin'].includes(req.user.role)
+      ? req.user.clinicId
+      : (req.query.clinicId || req.user.clinicId);
     const filter = { joinedAt: todayRange() };
     if (clinicId) filter.clinic = clinicId;
 

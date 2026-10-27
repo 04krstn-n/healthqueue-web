@@ -76,7 +76,12 @@ const getSuperAdminStats = async (req, res) => {
 // GET /api/dashboard/facility?clinicId=xxx
 const getFacilityStats = async (req, res) => {
   try {
-    const { clinicId } = req.query;
+    // Staff and facility admins only ever see their OWN clinic (a clinicId in
+    // the query used to be trusted, so any staff account could read another
+    // clinic's dashboard). Super admins may pick any clinic.
+    const clinicId = ['staff', 'facility_admin'].includes(req.user.role)
+      ? req.user.clinicId
+      : req.query.clinicId;
     if (!clinicId) return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'clinicId is required.' });
 
     // Defaults to 7 (unchanged for FacilityDashboard/QueueOversightPage,
@@ -92,7 +97,10 @@ const getFacilityStats = async (req, res) => {
       todayPatients, activeQueue, completedToday, todayAppointments,
     ] = await Promise.all([
       QueueEntry.countDocuments({ clinic: cid, joinedAt: todayRange() }),
-      QueueEntry.countDocuments({ clinic: cid, status: { $in: ['waiting', 'serving', 'called'] } }),
+      // Today only — the same tickets the Queue pages list. Counting every
+      // active ticket ever made included old tickets from previous days
+      // that were never closed ("In Queue: 3" with an empty queue list).
+      QueueEntry.countDocuments({ clinic: cid, joinedAt: todayRange(), status: { $in: ['waiting', 'serving', 'called'] } }),
       QueueEntry.countDocuments({ clinic: cid, joinedAt: todayRange(), status: { $in: ['done', 'completed'] } }),
       Appointment.countDocuments({ clinic: cid, appointmentDate: todayRange() }),
     ]);

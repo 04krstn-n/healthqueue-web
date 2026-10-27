@@ -102,6 +102,14 @@ const QueueEntrySchema = new mongoose.Schema(
       select: false, // not included in list payloads; read explicitly when needed
     },
     
+    // Set when staleQueueCleanup closes a ticket left active after its day
+    // ended (status becomes 'cancelled'), so reports can tell it apart from a
+    // cancellation by the patient or staff.
+    autoClosedAt: { type: Date, default: null },
+    // Set by services/graceSweeper.js when the 5-minute grace period ran out
+    // (it was being written but was missing from the schema, so it was dropped).
+    autoExpiredAt: { type: Date, default: null },
+
     // Actual computed metrics for OpenAI & Analytics
     // ─── Metric definitions (Capstone Requirement #3 — Waiting vs Service vs TAT) ───
     // Waiting Time   = joinedAt  -> servedAt   (queue entry until staff actually starts serving)

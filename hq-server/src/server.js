@@ -195,6 +195,10 @@ startGraceSweeper({ io, onChange: (clinicId) => notifyPositionMilestones(clinicI
 const { startAppointmentReminders } = require('./services/appointmentReminder');
 startAppointmentReminders();
 
+// ─── Close tickets left open from previous days + fix live clinic counters ───
+const { startStaleQueueCleanup } = require('./services/staleQueueCleanup');
+startStaleQueueCleanup();
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`HealthQueue+ API running on port ${PORT} [${NODE_ENV}]`);

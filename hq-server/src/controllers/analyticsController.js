@@ -183,7 +183,10 @@ The SUMMARY bullets must be simple enough for someone to understand at a glance,
 // ── GET /api/analytics/ai-insights?clinicId=xxx ──────────────────────────────
 const getAiInsights = async (req, res) => {
   try {
-    const clinicId = req.query.clinicId || req.user?.clinicId;
+    // Facility admins: always their own clinic; super admins may choose.
+    const clinicId = req.user?.role === 'facility_admin'
+      ? req.user.clinicId
+      : (req.query.clinicId || req.user?.clinicId);
     if (!clinicId) {
       return res.status(HttpStatus.BAD_REQUEST).json({ success: false, message: 'clinicId is required.' });
     }
@@ -201,7 +204,7 @@ const getAiInsights = async (req, res) => {
     // ── 1. Gather Metrics (CAPSTONE RULE: EXCLUDE CANCELLED VISIT COUNTS) ────
     const [todayPatients, activeQueue, completedToday, todayAppointments] = await Promise.all([
       QueueEntry.countDocuments({ clinic: cid, joinedAt: todayRange(), status: { $ne: 'cancelled' } }),
-      QueueEntry.countDocuments({ clinic: cid, status: { $in: ['waiting', 'serving', 'called'] } }),
+      QueueEntry.countDocuments({ clinic: cid, joinedAt: todayRange(), status: { $in: ['waiting', 'serving', 'called'] } }),
       QueueEntry.countDocuments({ clinic: cid, joinedAt: todayRange(), status: { $in: ['done', 'completed'] } }),
       Appointment.countDocuments({ clinic: cid, appointmentDate: todayRange(), status: { $ne: 'cancelled' } }),
     ]);
